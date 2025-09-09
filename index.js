@@ -567,6 +567,40 @@ try {
     if (BOT_TOKEN) {
         const bot = new Telegraf(BOT_TOKEN);
 
+        // Configure bot commands and the blue Menu button
+        (async () => {
+            try {
+                await bot.telegram.setMyCommands([
+                    { command: 'start', description: 'Start' },
+                    { command: 'register', description: 'Register' },
+                    { command: 'play', description: 'Play' },
+                    { command: 'deposit', description: 'Deposit' },
+                    { command: 'balance', description: 'Balance' },
+                    { command: 'support', description: 'Contact Support' },
+                    { command: 'instruction', description: 'How to Play' }
+                ]);
+
+                const hasHttpsWebApp = typeof WEBAPP_URL === 'string' && WEBAPP_URL.startsWith('https://');
+                if (hasHttpsWebApp) {
+                    await bot.telegram.setChatMenuButton({
+                        menu_button: {
+                            type: 'web_app',
+                            text: 'Play',
+                            web_app: { url: WEBAPP_URL }
+                        }
+                    });
+                } else {
+                    // Fallback to showing the list of commands when no HTTPS web app is configured
+                    await bot.telegram.setChatMenuButton({
+                        menu_button: { type: 'commands' }
+                    });
+                }
+            } catch (e) {
+                // eslint-disable-next-line no-console
+                console.log('Failed to set commands/menu:', e?.message || e);
+            }
+        })();
+
         function parseReceipt(text) {
             if (typeof text !== 'string') return null;
 
