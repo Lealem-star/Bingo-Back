@@ -3,6 +3,8 @@ const cors = require('cors');
 require('dotenv').config();
 const http = require('http');
 const { WebSocketServer } = require('ws');
+const path = require('path');
+const fs = require('fs');
 const connectDB = require('./config/database');
 const UserService = require('./services/userService');
 const WalletService = require('./services/walletService');
@@ -628,10 +630,12 @@ try {
                         ]
                     }
                 };
-                return ctx.reply(adminText, keyboard);
+                const photoPath = path.join(__dirname, 'static', 'lb.png');
+                const photo = fs.existsSync(photoPath) ? { source: fs.createReadStream(photoPath) } : (WEBAPP_URL || '').replace(/\/$/, '') + '/lb.png';
+                return ctx.replyWithPhoto(photo, { caption: adminText, reply_markup: keyboard.reply_markup });
             }
 
-            const welcomeText = `👋 Welcome to Beteseb Bingo! Choose an Option below.`;
+            const welcomeText = `👋 Welcome to Love Bingo! Choose an Option below.`;
             const keyboard = {
                 reply_markup: {
                     inline_keyboard: [
@@ -657,7 +661,9 @@ try {
                     ]
                 }
             };
-            return ctx.reply(welcomeText, keyboard);
+            const photoPath = path.join(__dirname, 'static', 'lb.png');
+            const photo = fs.existsSync(photoPath) ? { source: fs.createReadStream(photoPath) } : (WEBAPP_URL || '').replace(/\/$/, '') + '/lb.png';
+            return ctx.replyWithPhoto(photo, { caption: welcomeText, reply_markup: keyboard.reply_markup });
         });
 
         // --- Admin actions ---
@@ -900,7 +906,7 @@ try {
             ctx.answerCbQuery('📖 Instructions...');
             const keyboard = { inline_keyboard: [[{ text: '🔙 Back to Menu', callback_data: 'back_to_menu' }]] };
             if (isHttpsWebApp) keyboard.inline_keyboard.unshift([{ text: '🎮 Start Playing', web_app: { url: WEBAPP_URL } }]);
-            ctx.reply(`📖 How to Play Beteseb Bingo:\n\n1️⃣ Choose your stake (ETB 10 or 50)\n2️⃣ Select a bingo card\n3️⃣ Wait for numbers to be called\n4️⃣ Mark numbers on your card\n5️⃣ Call "BINGO!" when you win\n\n🎯 Win by getting 5 in a row (horizontal, vertical, or diagonal)\n\n💰 Prizes are shared among all winners!`, { reply_markup: keyboard });
+            ctx.reply(`📖 How to Play Love Bingo:\n\n1️⃣ Choose your stake (ETB 10 or 50)\n2️⃣ Select a bingo card\n3️⃣ Wait for numbers to be called\n4️⃣ Mark numbers on your card\n5️⃣ Call "BINGO!" when you win\n\n🎯 Win by getting 5 in a row (horizontal, vertical, or diagonal)\n\n💰 Prizes are shared among all winners!`, { reply_markup: keyboard });
         });
 
         bot.action('transfer', (ctx) => {
@@ -930,13 +936,13 @@ try {
             ctx.answerCbQuery('🔗 Invite friends...');
             const inviteLink = `https://t.me/${ctx.botInfo.username}?start=invite_${ctx.from.id}`;
             const keyboard = { inline_keyboard: [[{ text: '🔙 Back to Menu', callback_data: 'back_to_menu' }]] };
-            keyboard.inline_keyboard.unshift([{ text: '📤 Share Link', url: `https://t.me/share/url?url=${encodeURIComponent(inviteLink)}&text=Join me in Beteseb Bingo!` }]);
-            ctx.reply(`🔗 Invite Friends to Beteseb Bingo!\n\n👥 Share this link with your friends:\n\n${inviteLink}\n\n🎁 Invite rewards coming soon!\n\n💡 The more friends you invite, the more rewards you'll get!`, { reply_markup: keyboard });
+            keyboard.inline_keyboard.unshift([{ text: '📤 Share Link', url: `https://t.me/share/url?url=${encodeURIComponent(inviteLink)}&text=Join me in Love Bingo!` }]);
+            ctx.reply(`🔗 Invite Friends to Love Bingo!\n\n👥 Share this link with your friends:\n\n${inviteLink}\n\n🎁 Invite rewards coming soon!\n\n💡 The more friends you invite, the more rewards you'll get!`, { reply_markup: keyboard });
         });
 
         bot.action('back_to_menu', (ctx) => {
             ctx.answerCbQuery('🔙 Back to menu');
-            const welcomeText = `👋 Welcome to Beteseb Bingo! Choose an Option below.`;
+            const welcomeText = `👋 Welcome to Love Bingo! Choose an Option below.`;
             const keyboard = {
                 reply_markup: {
                     inline_keyboard: [
