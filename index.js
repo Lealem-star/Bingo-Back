@@ -570,6 +570,7 @@ try {
         // Configure bot commands and the blue Menu button
         (async () => {
             try {
+                // Global commands for everyone
                 await bot.telegram.setMyCommands([
                     { command: 'start', description: 'Start' },
                     { command: 'register', description: 'Register' },
@@ -594,6 +595,39 @@ try {
                     await bot.telegram.setChatMenuButton({
                         menu_button: { type: 'commands' }
                     });
+                }
+
+                // Admin-scoped commands and menu button
+                const ADMIN_ID = '966981995';
+                try {
+                    await bot.telegram.setMyCommands([
+                        { command: 'admin', description: 'Open Admin Panel' },
+                        { command: 'today', description: 'Today Revenue (20%)' },
+                        { command: 'week', description: 'This Week Revenue (20%)' },
+                        { command: 'broadcast', description: 'Start Broadcast Mode' }
+                    ], {
+                        scope: { type: 'chat', chat_id: ADMIN_ID }
+                    });
+
+                    // Admin chat menu button mirrors global behavior; prefer web app if available
+                    if (hasHttpsWebApp) {
+                        await bot.telegram.setChatMenuButton({
+                            chat_id: ADMIN_ID,
+                            menu_button: {
+                                type: 'web_app',
+                                text: 'Admin / Play',
+                                web_app: { url: WEBAPP_URL }
+                            }
+                        });
+                    } else {
+                        await bot.telegram.setChatMenuButton({
+                            chat_id: ADMIN_ID,
+                            menu_button: { type: 'commands' }
+                        });
+                    }
+                } catch (e) {
+                    // eslint-disable-next-line no-console
+                    console.log('Admin menu/commands setup skipped:', e?.message || e);
                 }
             } catch (e) {
                 // eslint-disable-next-line no-console
