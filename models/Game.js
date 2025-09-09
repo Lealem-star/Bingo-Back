@@ -80,7 +80,6 @@ const gameSchema = new mongoose.Schema({
 });
 
 // Create indexes
-gameSchema.index({ gameId: 1 });
 gameSchema.index({ status: 1 });
 gameSchema.index({ stake: 1 });
 gameSchema.index({ 'players.userId': 1 });
