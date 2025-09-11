@@ -495,6 +495,16 @@ app.get('/health', (req, res) => {
     res.json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
+// Debug endpoint
+app.get('/debug', (req, res) => {
+    res.json({
+        status: 'ok',
+        timestamp: new Date().toISOString(),
+        headers: req.headers,
+        jwt_secret_set: !!process.env.JWT_SECRET
+    });
+});
+
 // Bingo game routes
 app.get('/api/bingo/status', (req, res) => {
     res.json({
