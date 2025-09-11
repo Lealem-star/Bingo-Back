@@ -323,7 +323,88 @@ function startTelegramBot({ BOT_TOKEN, WEBAPP_URL }) {
         bot.action('withdraw', async (ctx) => {
             if (!(await requireRegistration(ctx))) return;
             ctx.answerCbQuery('🤑 Withdraw info...');
-            ctx.reply('🤑 Withdraw Funds:\n\n💡 Withdrawal feature coming soon!\n\n🔮 You\'ll be able to:\n• Withdraw to your bank account\n• Request via CBE transfer\n• Minimum withdrawal: ETB 50\n\n📞 Contact support for manual withdrawals', { reply_markup: { inline_keyboard: [[{ text: '☎️ Contact Support', callback_data: 'support' }], [{ text: '🔙 Back to Menu', callback_data: 'back_to_menu' }]] } });
+
+            try {
+                const userId = String(ctx.from.id);
+                const userData = await UserService.getUserWithWallet(userId);
+                if (!userData || !userData.wallet) {
+                    return ctx.reply('❌ Wallet not found. Please register first.');
+                }
+
+                const w = userData.wallet;
+                const keyboard = { inline_keyboard: [] };
+
+                if (w.main >= 50) {
+                    keyboard.inline_keyboard.push([{ text: '💰 Request Withdrawal', callback_data: 'request_withdrawal' }]);
+                } else {
+                    keyboard.inline_keyboard.push([{ text: '❌ Insufficient Balance (Min: 50 ETB)', callback_data: 'back_to_menu' }]);
+                }
+
+                keyboard.inline_keyboard.push([{ text: '🔙 Back to Menu', callback_data: 'back_to_menu' }]);
+
+                ctx.reply(`🤑 Withdraw Funds:\n\n💰 Main Wallet: ETB ${w.main.toFixed(2)}\n\n💡 Withdrawal Options:\n• Minimum: ETB 50\n• Maximum: ETB 10,000\n• Processing: 24-48 hours\n\n📞 Contact support for assistance`, { reply_markup: keyboard });
+            } catch (error) {
+                console.error('Withdraw info error:', error);
+                ctx.reply('❌ Error checking balance. Please try again.');
+            }
+        });
+
+        bot.action('request_withdrawal', async (ctx) => {
+            if (!(await requireRegistration(ctx))) return;
+            ctx.answerCbQuery('💰 Withdrawal request...');
+            withdrawalStates.set(String(ctx.from.id), 'awaiting_amount');
+            ctx.reply('💰 Enter withdrawal amount (ETB 50 - 10,000):\n\n💡 Example: 100\n\n📱 You will be asked for destination details after amount confirmation.');
+        });
+
+        // Admin withdrawal approval/denial handlers
+        bot.action(/^approve_wd_(.+)$/, async (ctx) => {
+            if (!(await ensureAdmin(ctx))) return;
+            const withdrawalId = ctx.match[1];
+
+            try {
+                const apiBase = process.env.API_URL || 'http://localhost:3001';
+                const response = await fetch(`${apiBase}/admin/withdrawals/${withdrawalId}/approve`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+
+                if (response.ok) {
+                    await ctx.answerCbQuery('✅ Withdrawal approved');
+                    await ctx.reply('✅ Withdrawal has been approved and processed.');
+                } else {
+                    await ctx.answerCbQuery('❌ Failed to approve');
+                    await ctx.reply('❌ Failed to approve withdrawal. Please try again.');
+                }
+            } catch (error) {
+                console.error('Approval error:', error);
+                await ctx.answerCbQuery('❌ Error occurred');
+                await ctx.reply('❌ Error processing approval. Please try again.');
+            }
+        });
+
+        bot.action(/^deny_wd_(.+)$/, async (ctx) => {
+            if (!(await ensureAdmin(ctx))) return;
+            const withdrawalId = ctx.match[1];
+
+            try {
+                const apiBase = process.env.API_URL || 'http://localhost:3001';
+                const response = await fetch(`${apiBase}/admin/withdrawals/${withdrawalId}/deny`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+
+                if (response.ok) {
+                    await ctx.answerCbQuery('❌ Withdrawal denied');
+                    await ctx.reply('❌ Withdrawal has been denied.');
+                } else {
+                    await ctx.answerCbQuery('❌ Failed to deny');
+                    await ctx.reply('❌ Failed to deny withdrawal. Please try again.');
+                }
+            } catch (error) {
+                console.error('Denial error:', error);
+                await ctx.answerCbQuery('❌ Error occurred');
+                await ctx.reply('❌ Error processing denial. Please try again.');
+            }
         });
 
         bot.action('invite', async (ctx) => {
@@ -421,6 +502,9 @@ function startTelegramBot({ BOT_TOKEN, WEBAPP_URL }) {
             return next();
         });
 
+        // Track withdrawal states
+        const withdrawalStates = new Map();
+
         bot.hears(/.*/, async (ctx) => {
             try {
                 if (ctx.message.text.startsWith('/') || ctx.update.callback_query) return;
@@ -435,6 +519,80 @@ function startTelegramBot({ BOT_TOKEN, WEBAPP_URL }) {
                 }
                 const userId = String(ctx.from.id);
                 const messageText = ctx.message.text || '';
+
+                // Check if user is in withdrawal flow
+                const withdrawalState = withdrawalStates.get(userId);
+                if (withdrawalState === 'awaiting_amount') {
+                    const amountMatch = messageText.match(/^(\d+(?:\.\d{1,2})?)$/);
+                    if (amountMatch) {
+                        const amount = Number(amountMatch[1]);
+                        if (amount >= 50 && amount <= 10000) {
+                            // Store amount and ask for destination
+                            withdrawalStates.set(userId, { stage: 'awaiting_destination', amount });
+                            ctx.reply(`💰 Withdrawal Amount: ETB ${amount}\n\n📱 Please provide destination details:\n\n• Bank name\n• Account number\n• Account holder name\n\n💡 Example: "CBE Bank, 1000123456789, John Doe"`);
+                            return;
+                        } else {
+                            ctx.reply('❌ Invalid amount. Please enter between ETB 50 - 10,000.');
+                            return;
+                        }
+                    } else {
+                        ctx.reply('❌ Please enter a valid amount (numbers only).');
+                        return;
+                    }
+                }
+
+                if (withdrawalState && withdrawalState.stage === 'awaiting_destination') {
+                    const destination = messageText.trim();
+                    if (destination.length < 10) {
+                        ctx.reply('❌ Please provide complete destination details (at least 10 characters).');
+                        return;
+                    }
+
+                    try {
+                        // Create withdrawal request via API
+                        const apiBase = process.env.API_URL || 'http://localhost:3001';
+                        const response = await fetch(`${apiBase}/wallet/withdraw`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                amount: withdrawalState.amount,
+                                destination
+                            })
+                        });
+
+                        if (response.ok) {
+                            const result = await response.json();
+                            withdrawalStates.delete(userId);
+
+                            // Notify admin
+                            const adminUsers = await require('../models/User').find({ role: 'admin' }, { telegramId: 1 });
+                            for (const admin of adminUsers) {
+                                try {
+                                    await bot.telegram.sendMessage(admin.telegramId,
+                                        `🆕 New Withdrawal Request\n\n👤 User: ${ctx.from.first_name} ${ctx.from.last_name || ''}\n📱 Phone: ${ctx.from.id}\n💰 Amount: ETB ${withdrawalState.amount}\n🏦 Destination: ${destination}\n📋 Reference: ${result.reference}\n\n⏰ Process within 24-48 hours`,
+                                        { reply_markup: { inline_keyboard: [[{ text: '✅ Approve', callback_data: `approve_wd_${result.withdrawalId}` }, { text: '❌ Deny', callback_data: `deny_wd_${result.withdrawalId}` }]] } }
+                                    );
+                                } catch (e) { console.log('Failed to notify admin:', e?.message); }
+                            }
+
+                            ctx.reply(`✅ Withdrawal Request Submitted!\n\n💰 Amount: ETB ${withdrawalState.amount}\n🏦 Destination: ${destination}\n📋 Reference: ${result.reference}\n\n⏰ Processing: 24-48 hours\n📞 Contact support for updates`, { reply_markup: { inline_keyboard: [[{ text: '🔙 Back to Menu', callback_data: 'back_to_menu' }]] } });
+                        } else {
+                            const error = await response.json();
+                            let errorMsg = '❌ Withdrawal request failed.';
+                            if (error.error === 'INSUFFICIENT_BALANCE') errorMsg = '❌ Insufficient balance in main wallet.';
+                            else if (error.error === 'MINIMUM_WITHDRAWAL_50') errorMsg = '❌ Minimum withdrawal is ETB 50.';
+                            else if (error.error === 'MAXIMUM_WITHDRAWAL_10000') errorMsg = '❌ Maximum withdrawal is ETB 10,000.';
+
+                            ctx.reply(errorMsg, { reply_markup: { inline_keyboard: [[{ text: '🔙 Back to Menu', callback_data: 'back_to_menu' }]] } });
+                        }
+                    } catch (error) {
+                        console.error('Withdrawal API error:', error);
+                        ctx.reply('❌ Withdrawal request failed. Please try again or contact support.');
+                    }
+                    withdrawalStates.delete(userId);
+                    return;
+                }
+
                 const amountMatch = messageText.match(/^(\d+(?:\.\d{1,2})?)$/);
                 if (amountMatch) {
                     const amount = Number(amountMatch[1]);

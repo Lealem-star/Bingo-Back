@@ -61,7 +61,7 @@ app.post('/auth/telegram/verify', async (req, res) => {
             telegramUser = verifyTelegramInitData(initData);
             if (!telegramUser) return res.status(401).json({ error: 'INVALID_INIT_DATA' });
         } else if (devUserId) {
-            telegramUser = { id: String(devUserId), first_name: 'Dev' };
+            telegramUser = { id: String(devUserId), first_name: 'Dev', last_name: 'User', username: 'dev' };
         } else {
             return res.status(400).json({ error: 'MISSING_PARAMS' });
         }
@@ -70,6 +70,16 @@ app.post('/auth/telegram/verify', async (req, res) => {
         let user;
 
         user = await UserService.createOrUpdateUser(telegramUser);
+
+        // For dev users, ensure they have a wallet and are registered
+        if (devUserId) {
+            const wallet = await WalletService.getWallet(user._id);
+            if (!user.isRegistered) {
+                user.isRegistered = true;
+                user.phone = '+1234567890'; // Dev phone
+                await user.save();
+            }
+        }
 
         // Issue JWT
         const token = jwt.sign({ sub: user.telegramId || userId, iat: Math.floor(Date.now() / 1000) }, JWT_SECRET, { expiresIn: '7d' });
@@ -275,13 +285,200 @@ app.get('/user/transactions', authMiddleware, async (req, res) => {
     }
 });
 
+// Withdrawal request endpoint
+app.post('/wallet/withdraw', authMiddleware, async (req, res) => {
+    try {
+        const { amount, destination } = req.body || {};
+        const amt = Number(amount || 0);
+
+        if (amt < 50) return res.status(400).json({ error: 'MINIMUM_WITHDRAWAL_50' });
+        if (amt > 10000) return res.status(400).json({ error: 'MAXIMUM_WITHDRAWAL_10000' });
+
+        const user = await UserService.getUserByTelegramId(req.userId);
+        if (!user) return res.status(404).json({ error: 'USER_NOT_FOUND' });
+
+        const wallet = await WalletService.getWallet(user._id);
+        if (wallet.main < amt) return res.status(400).json({ error: 'INSUFFICIENT_BALANCE' });
+
+        // Create withdrawal request
+        const Transaction = require('./models/Transaction');
+        const withdrawal = new Transaction({
+            userId: user._id,
+            type: 'withdrawal',
+            amount: -amt,
+            description: `Withdrawal request: ETB ${amt} to ${destination || 'Not specified'}`,
+            status: 'pending',
+            reference: `WDR${Date.now()}`,
+            balanceBefore: {
+                main: wallet.main,
+                play: wallet.play,
+                coins: wallet.coins
+            },
+            balanceAfter: {
+                main: wallet.main,
+                play: wallet.play,
+                coins: wallet.coins
+            }
+        });
+        await withdrawal.save();
+
+        res.json({
+            withdrawalId: withdrawal._id,
+            amount: amt,
+            status: 'pending',
+            reference: withdrawal.reference
+        });
+    } catch (error) {
+        console.error('Withdrawal request error:', error);
+        res.status(500).json({ error: 'INTERNAL_SERVER_ERROR' });
+    }
+});
+
+// Admin withdrawal approval endpoint
+app.post('/admin/withdrawals/:id/approve', authMiddleware, async (req, res) => {
+    try {
+        const user = await UserService.getUserByTelegramId(req.userId);
+        if (!user || user.role !== 'admin') return res.status(403).json({ error: 'UNAUTHORIZED' });
+
+        const Transaction = require('./models/Transaction');
+        const withdrawal = await Transaction.findById(req.params.id);
+        if (!withdrawal || withdrawal.type !== 'withdrawal') return res.status(404).json({ error: 'WITHDRAWAL_NOT_FOUND' });
+
+        if (withdrawal.status !== 'pending') return res.status(400).json({ error: 'ALREADY_PROCESSED' });
+
+        // Approve withdrawal - deduct from wallet
+        const result = await WalletService.updateBalance(withdrawal.userId, { main: withdrawal.amount });
+
+        // Update withdrawal status
+        withdrawal.status = 'completed';
+        withdrawal.balanceAfter = result.balanceAfter;
+        await withdrawal.save();
+
+        // Update wallet totals
+        await require('./models/Wallet').findOneAndUpdate(
+            { userId: withdrawal.userId },
+            {
+                $inc: { totalWithdrawn: Math.abs(withdrawal.amount) },
+                $set: { lastWithdrawalDate: new Date() }
+            }
+        );
+
+        res.json({ status: 'approved', withdrawalId: withdrawal._id });
+    } catch (error) {
+        console.error('Withdrawal approval error:', error);
+        res.status(500).json({ error: 'INTERNAL_SERVER_ERROR' });
+    }
+});
+
+// Admin withdrawal denial endpoint
+app.post('/admin/withdrawals/:id/deny', authMiddleware, async (req, res) => {
+    try {
+        const user = await UserService.getUserByTelegramId(req.userId);
+        if (!user || user.role !== 'admin') return res.status(403).json({ error: 'UNAUTHORIZED' });
+
+        const Transaction = require('./models/Transaction');
+        const withdrawal = await Transaction.findById(req.params.id);
+        if (!withdrawal || withdrawal.type !== 'withdrawal') return res.status(404).json({ error: 'WITHDRAWAL_NOT_FOUND' });
+
+        if (withdrawal.status !== 'pending') return res.status(400).json({ error: 'ALREADY_PROCESSED' });
+
+        withdrawal.status = 'cancelled';
+        await withdrawal.save();
+
+        res.json({ status: 'denied', withdrawalId: withdrawal._id });
+    } catch (error) {
+        console.error('Withdrawal denial error:', error);
+        res.status(500).json({ error: 'INTERNAL_SERVER_ERROR' });
+    }
+});
+
+// Get pending withdrawals for admin
+app.get('/admin/withdrawals', authMiddleware, async (req, res) => {
+    try {
+        const user = await UserService.getUserByTelegramId(req.userId);
+        if (!user || user.role !== 'admin') return res.status(403).json({ error: 'UNAUTHORIZED' });
+
+        const Transaction = require('./models/Transaction');
+        const User = require('./models/User');
+
+        const withdrawals = await Transaction.find({ type: 'withdrawal', status: 'pending' })
+            .populate('userId', 'firstName lastName phone telegramId')
+            .sort({ createdAt: -1 })
+            .limit(50);
+
+        const formatted = withdrawals.map(w => ({
+            id: w._id,
+            amount: Math.abs(w.amount),
+            description: w.description,
+            reference: w.reference,
+            createdAt: w.createdAt,
+            user: {
+                name: `${w.userId.firstName} ${w.userId.lastName}`.trim(),
+                phone: w.userId.phone,
+                telegramId: w.userId.telegramId
+            }
+        }));
+
+        res.json({ withdrawals: formatted });
+    } catch (error) {
+        console.error('Get withdrawals error:', error);
+        res.status(500).json({ error: 'INTERNAL_SERVER_ERROR' });
+    }
+});
+
 // Game history endpoint
 app.get('/user/games', authMiddleware, async (req, res) => {
     try {
         const user = await UserService.getUserByTelegramId(req.userId);
         if (!user) return res.status(404).json({ error: 'USER_NOT_FOUND' });
-        const games = [];
-        res.json({ games });
+
+        const { page = 1, limit = 20 } = req.query;
+        const skip = (page - 1) * limit;
+
+        // Get games where user participated
+        const games = await Game.find({
+            $or: [
+                { 'players.userId': req.userId },
+                { 'winners.userId': req.userId }
+            ]
+        })
+            .sort({ finishedAt: -1 })
+            .limit(parseInt(limit))
+            .skip(parseInt(skip))
+            .select('gameId stake status calledNumbers winners pot systemCut totalPrizes startedAt finishedAt');
+
+        const formattedGames = games.map(game => {
+            const userWinner = game.winners.find(w => w.userId === req.userId);
+            const userPlayer = game.players.find(p => p.userId === req.userId);
+
+            return {
+                id: game._id,
+                gameId: game.gameId,
+                stake: game.stake,
+                status: game.status,
+                calledNumbers: game.calledNumbers,
+                pot: game.pot,
+                systemCut: game.systemCut,
+                totalPrizes: game.totalPrizes,
+                startedAt: game.startedAt,
+                finishedAt: game.finishedAt,
+                userResult: {
+                    participated: !!userPlayer,
+                    won: !!userWinner,
+                    prize: userWinner ? userWinner.prize : 0,
+                    cardNumber: userWinner ? userWinner.cartelaNumber : null
+                }
+            };
+        });
+
+        const total = await Game.countDocuments({
+            $or: [
+                { 'players.userId': req.userId },
+                { 'winners.userId': req.userId }
+            ]
+        });
+
+        res.json({ games: formattedGames, total });
     } catch (error) {
         console.error('Game history error:', error);
         res.status(500).json({ error: 'INTERNAL_SERVER_ERROR' });
@@ -414,6 +611,26 @@ function makeRoom(stake) {
         const winnersPayload = room.winners.map(w => ({ ...w, prize: prizePerWinner, cardNumbers: room.cardById.get(w.cardId), called: room.called }));
         broadcast('game_finished', { gameId: room.gameId, winners: winnersPayload, prizePerWinner, systemCut: totalSystem, nextStartAt: next });
 
+        // Process winnings for each winner
+        (async () => {
+            try {
+                for (const winner of room.winners) {
+                    if (winner.userId && prizePerWinner > 0) {
+                        try {
+                            const user = await UserService.getUserByTelegramId(winner.userId);
+                            if (user) {
+                                await WalletService.processGameWin(user._id, prizePerWinner, room.gameId);
+                            }
+                        } catch (error) {
+                            console.error('Prize processing error for user', winner.userId, error);
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error('Prize processing error:', e);
+            }
+        })();
+
         // Persist finished game with system revenue (best-effort)
         (async () => {
             try {
@@ -421,10 +638,10 @@ function makeRoom(stake) {
                     gameId: room.gameId,
                     stake: room.stake,
                     status: 'finished',
-                    players: [],
+                    players: Array.from(room.clients).map(ws => ({ userId: ws.userId, hasBet: ws.hasBet })),
                     calledNumbers: room.called,
                     winners: winnersPayload.map(w => ({
-                        userId: undefined,
+                        userId: w.userId,
                         cartelaNumber: w.cardId,
                         prize: w.prize,
                         winningPattern: 'bingo'
@@ -460,8 +677,32 @@ function makeRoom(stake) {
     toRegistration();
 
     // Public API
-    room.onJoin = (ws) => {
+    room.onJoin = async (ws) => {
         room.clients.add(ws);
+
+        // Process bet when user joins during registration phase
+        if (room.phase === 'registration' && ws.userId) {
+            try {
+                const user = await UserService.getUserByTelegramId(ws.userId);
+                if (user) {
+                    const wallet = await WalletService.getWallet(user._id);
+                    if (wallet.play >= room.stake) {
+                        await WalletService.processGameBet(user._id, room.stake, room.gameId || 'PENDING');
+                        ws.hasBet = true;
+                    } else {
+                        send(ws, 'error', { code: 'INSUFFICIENT_BALANCE', message: `Insufficient play balance. Need ${room.stake} ETB` });
+                        ws.close();
+                        return;
+                    }
+                }
+            } catch (error) {
+                console.error('Bet processing error:', error);
+                send(ws, 'error', { code: 'BET_FAILED', message: 'Failed to process bet' });
+                ws.close();
+                return;
+            }
+        }
+
         // Snapshot
         try { ws.send(JSON.stringify({ type: 'snapshot', payload: { phase: room.phase, gameId: room.gameId, called: room.called, availableCards: room.availableCards.slice(0, 60), endsAt: room.nextStartAt } })); } catch { }
         ws.on('close', () => room.clients.delete(ws));
@@ -487,21 +728,44 @@ function send(ws, type, payload) {
     try { ws.send(JSON.stringify({ type, payload })); } catch { }
 }
 
-wss.on('connection', (ws, request) => {
+wss.on('connection', async (ws, request) => {
     const url = new URL(request.url, `http://localhost:${PORT}`);
     const stake = url.searchParams.get('stake') || '10';
+    const token = url.searchParams.get('token') || '';
+
+    // Authenticate user
+    let userId = null;
+    if (token) {
+        try {
+            const payload = jwt.verify(token, JWT_SECRET);
+            userId = String(payload.sub);
+        } catch (e) {
+            send(ws, 'error', { code: 'INVALID_TOKEN', message: 'Authentication failed' });
+            ws.close();
+            return;
+        }
+    } else {
+        send(ws, 'error', { code: 'NO_TOKEN', message: 'Authentication required' });
+        ws.close();
+        return;
+    }
+
     const room = rooms.get(String(stake));
     if (!room) {
         send(ws, 'error', { code: 'NO_ROOM', message: 'Invalid stake' });
         ws.close();
         return;
     }
+
+    // Store user info on the websocket
+    ws.userId = userId;
     room.onJoin(ws);
 
-    ws.on('message', (buf) => {
+    ws.on('message', async (buf) => {
         let msg = null;
         try { msg = JSON.parse(buf.toString()); } catch { }
         if (!msg) return;
+
         if (msg.type === 'select_card') {
             // For demo we do nothing; could mark reserved
         }
@@ -514,7 +778,7 @@ wss.on('connection', (ws, request) => {
             // Add winner (avoid duplicates by cardId)
             const cardId = msg.payload.cardNumber;
             if (!room.winners.find(w => w.cardId === cardId)) {
-                room.winners.push({ name: 'Player', cardId });
+                room.winners.push({ name: 'Player', cardId, userId: ws.userId });
             }
             const winnerCount = room.winners.length;
             const systemCut = Math.floor(room.pot * 0.20);
