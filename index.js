@@ -542,6 +542,7 @@ function makeRoom(stake) {
         pot: 0,
         winners: [],
         cardById: new Map(),
+        selectedByUserId: new Set(),
     };
 
     function broadcast(type, payload) {
@@ -555,14 +556,14 @@ function makeRoom(stake) {
         room.gameId = `BB${Math.floor(Math.random() * 900000 + 100000)}`;
         room.called = [];
         room.winners = [];
-        room.pot = stake * room.clients.size;
+        room.pot = stake * room.selectedByUserId.size;
         room.cardById.clear();
         const numbers = shuffle(range(1, 75));
         // Give each client a random card for demo
         room.clients.forEach(ws => {
             const card = generateCard();
             room.cardById.set(card.id, card.grid);
-            try { ws.send(JSON.stringify({ type: 'game_started', payload: { gameId: room.gameId, bet: stake, pot: room.pot, card, called: [] } })); } catch { }
+            try { ws.send(JSON.stringify({ type: 'game_started', payload: { gameId: room.gameId, bet: stake, pot: room.pot, playersCount: room.selectedByUserId.size, card, called: [] } })); } catch { }
         });
         let i = 0;
         let waitingForAudio = false;
@@ -664,9 +665,10 @@ function makeRoom(stake) {
 
     function toRegistration() {
         room.phase = 'registration';
+        room.selectedByUserId.clear();
         const ends = Date.now() + 15000;
         room.nextStartAt = ends;
-        broadcast('registration_open', { gameId: `PENDING`, endsAt: ends, availableCards: room.availableCards.slice(0, 60) });
+        broadcast('registration_open', { gameId: `PENDING`, endsAt: ends, availableCards: room.availableCards.slice(0, 60), playersCount: room.selectedByUserId.size });
         setTimeout(() => {
             broadcast('registration_closed', { gameId: 'PENDING' });
             toRunning();
@@ -689,6 +691,8 @@ function makeRoom(stake) {
                     if (wallet.play >= room.stake) {
                         await WalletService.processGameBet(user._id, room.stake, room.gameId || 'PENDING');
                         ws.hasBet = true;
+                        room.selectedByUserId.add(ws.userId);
+                        broadcast('players_update', { playersCount: room.selectedByUserId.size });
                     } else {
                         send(ws, 'error', { code: 'INSUFFICIENT_BALANCE', message: `Insufficient play balance. Need ${room.stake} ETB` });
                         ws.close();
@@ -704,7 +708,7 @@ function makeRoom(stake) {
         }
 
         // Snapshot
-        try { ws.send(JSON.stringify({ type: 'snapshot', payload: { phase: room.phase, gameId: room.gameId, called: room.called, availableCards: room.availableCards.slice(0, 60), endsAt: room.nextStartAt } })); } catch { }
+        try { ws.send(JSON.stringify({ type: 'snapshot', payload: { phase: room.phase, gameId: room.gameId, called: room.called, availableCards: room.availableCards.slice(0, 60), endsAt: room.nextStartAt, playersCount: room.selectedByUserId.size } })); } catch { }
         ws.on('close', () => room.clients.delete(ws));
     };
 
@@ -767,7 +771,13 @@ wss.on('connection', async (ws, request) => {
         if (!msg) return;
 
         if (msg.type === 'select_card') {
-            // For demo we do nothing; could mark reserved
+            // Mark that this user selected a cartella and is participating
+            if (room && ws.userId) {
+                room.selectedByUserId.add(ws.userId);
+                room.clients.forEach(client => {
+                    send(client, 'players_update', { playersCount: room.selectedByUserId.size });
+                });
+            }
         }
         if (msg.type === 'audio_done') {
             if (room && typeof room._onAudioDone === 'function') {
