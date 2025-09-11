@@ -19,7 +19,6 @@ function startTelegramBot({ BOT_TOKEN, WEBAPP_URL }) {
             try {
                 await bot.telegram.setMyCommands([
                     { command: 'start', description: 'Start' },
-                    { command: 'register', description: 'Register' },
                     { command: 'play', description: 'Play' },
                     { command: 'deposit', description: 'Deposit' },
                     { command: 'balance', description: 'Balance' },
@@ -81,11 +80,11 @@ function startTelegramBot({ BOT_TOKEN, WEBAPP_URL }) {
                 registered = !!(user && (user.isRegistered || user.phone));
                 if (!registered) {
                     const regKeyboard = { reply_markup: { keyboard: [[{ text: '📱 Share Contact', request_contact: true }]], resize_keyboard: true, one_time_keyboard: true } };
-                    const regText = '📝 Please complete registration to continue.\n\n📱 Tap "Share Contact" below to provide your phone number.';
+                    const regText = '👋 Welcome to Love Bingo!\n\n📝 Please complete registration to continue.\n\n📱 Tap "Share Contact" below to provide your phone number.';
                     return ctx.reply(regText, regKeyboard);
                 }
                 const welcomeText = `👋 Welcome to Love Bingo! Choose an Option below.`;
-                const keyboard = { reply_markup: { inline_keyboard: [[{ text: '🎮 Play', callback_data: 'play' }, { text: '📝 Register', callback_data: 'register' }], [{ text: '💵 Check Balance', callback_data: 'balance' }, { text: '💰 Deposit', callback_data: 'deposit' }], [{ text: '☎️ Contact Support', callback_data: 'support' }, { text: '📖 Instruction', callback_data: 'instruction' }], [{ text: '🎁 Transfer', callback_data: 'transfer' }, { text: '🤑 Withdraw', callback_data: 'withdraw' }], [{ text: '🔗 Invite', callback_data: 'invite' }]] } };
+                const keyboard = { reply_markup: { inline_keyboard: [[{ text: '🎮 Play', callback_data: 'play' }], [{ text: '💵 Check Balance', callback_data: 'balance' }, { text: '💰 Deposit', callback_data: 'deposit' }], [{ text: '☎️ Contact Support', callback_data: 'support' }, { text: '📖 Instruction', callback_data: 'instruction' }], [{ text: '🤑 Withdraw', callback_data: 'withdraw' }, { text: '🔗 Invite', callback_data: 'invite' }]] } };
                 const photoPath = path.join(__dirname, '..', 'static', 'lb.png');
                 const photo = fs.existsSync(photoPath) ? { source: fs.createReadStream(photoPath) } : (WEBAPP_URL || '').replace(/\/$/, '') + '/lb.png';
                 return ctx.replyWithPhoto(photo, { caption: welcomeText, reply_markup: keyboard.reply_markup });
@@ -248,6 +247,7 @@ function startTelegramBot({ BOT_TOKEN, WEBAPP_URL }) {
             const user = await UserService.getUserByTelegramId(userId);
             return !!(user && (user.isRegistered || user.phone));
         }
+
         async function requireRegistration(ctx) {
             const userId = String(ctx.from.id);
             const ok = await isUserRegistered(userId);
@@ -259,7 +259,6 @@ function startTelegramBot({ BOT_TOKEN, WEBAPP_URL }) {
         }
 
         bot.action('play', async (ctx) => {
-            if (!(await requireRegistration(ctx))) return;
             ctx.answerCbQuery('🎮 Opening game...');
             const keyboard = { inline_keyboard: [[{ text: '🔙 Back to Menu', callback_data: 'back_to_menu' }]] };
             if (isHttpsWebApp) { keyboard.inline_keyboard.unshift([{ text: '🌐 Open Web App', web_app: { url: WEBAPP_URL } }]); }
@@ -267,24 +266,13 @@ function startTelegramBot({ BOT_TOKEN, WEBAPP_URL }) {
             ctx.reply('🎮 To play Bingo, please use our web app:' + note, { reply_markup: keyboard });
         });
 
-        bot.action('register', async (ctx) => {
-            ctx.answerCbQuery('📝 Registration info...');
-            const userId = String(ctx.from.id);
-            const already = await isUserRegistered(userId);
-            if (already) {
-                const keyboard = { inline_keyboard: [[{ text: '🔙 Back to Menu', callback_data: 'back_to_menu' }]] };
-                return ctx.reply('✅ You are already registered. Thank you!', { reply_markup: keyboard });
-            }
-            const keyboard = { reply_markup: { keyboard: [[{ text: '📱 Share Contact', request_contact: true }]], resize_keyboard: true, one_time_keyboard: true } };
-            ctx.reply('📝 To complete registration, please share your contact information:\n\n📱 Click "Share Contact" below to provide your phone number.\n\n✅ This helps us verify your account and provide better support.', keyboard);
-        });
 
         bot.action('balance', async (ctx) => {
             if (!(await requireRegistration(ctx))) return;
             try {
                 const userId = String(ctx.from.id);
                 const userData = await UserService.getUserWithWallet(userId);
-                if (!userData || !userData.wallet) { return ctx.reply('❌ Wallet not found. Please register first.'); }
+                if (!userData || !userData.wallet) { return ctx.reply('❌ Wallet not found. Please try again later.'); }
                 const w = userData.wallet;
                 ctx.answerCbQuery('💵 Balance checked');
                 const keyboard = { inline_keyboard: [[{ text: '🔙 Back to Menu', callback_data: 'back_to_menu' }]] };
@@ -314,11 +302,6 @@ function startTelegramBot({ BOT_TOKEN, WEBAPP_URL }) {
             ctx.reply('📖 How to Play Love Bingo:\n\n1️⃣ Choose your stake (ETB 10 or 50)\n2️⃣ Select a bingo card\n3️⃣ Wait for numbers to be called\n4️⃣ Mark numbers on your card\n5️⃣ Call "BINGO!" when you win\n\n🎯 Win by getting 5 in a row (horizontal, vertical, or diagonal)\n\n💰 Prizes are shared among all winners!', { reply_markup: keyboard });
         });
 
-        bot.action('transfer', async (ctx) => {
-            if (!(await requireRegistration(ctx))) return;
-            ctx.answerCbQuery('🎁 Transfer info...');
-            ctx.reply('🎁 Transfer to Friends:\n\n💡 Transfer feature coming soon!\n\n🔮 You\'ll be able to:\n• Send play balance to friends\n• Gift coins to other players\n• Share winnings\n\n📱 Stay tuned for updates!', { reply_markup: { inline_keyboard: [[{ text: '🔙 Back to Menu', callback_data: 'back_to_menu' }]] } });
-        });
 
         bot.action('withdraw', async (ctx) => {
             if (!(await requireRegistration(ctx))) return;
@@ -328,7 +311,7 @@ function startTelegramBot({ BOT_TOKEN, WEBAPP_URL }) {
                 const userId = String(ctx.from.id);
                 const userData = await UserService.getUserWithWallet(userId);
                 if (!userData || !userData.wallet) {
-                    return ctx.reply('❌ Wallet not found. Please register first.');
+                    return ctx.reply('❌ Wallet not found. Please try again later.');
                 }
 
                 const w = userData.wallet;
@@ -420,7 +403,7 @@ function startTelegramBot({ BOT_TOKEN, WEBAPP_URL }) {
             if (!(await requireRegistration(ctx))) return;
             ctx.answerCbQuery('🔙 Back to menu');
             const welcomeText = `👋 Welcome to Love Bingo! Choose an Option below.`;
-            const keyboard = { reply_markup: { inline_keyboard: [[{ text: '🎮 Play', callback_data: 'play' }, { text: '📝 Register', callback_data: 'register' }], [{ text: '💵 Check Balance', callback_data: 'balance' }, { text: '💰 Deposit', callback_data: 'deposit' }], [{ text: '☎️ Contact Support', callback_data: 'support' }, { text: '📖 Instruction', callback_data: 'instruction' }], [{ text: '🎁 Transfer', callback_data: 'transfer' }, { text: '🤑 Withdraw', callback_data: 'withdraw' }], [{ text: '🔗 Invite', callback_data: 'invite' }]] } };
+            const keyboard = { reply_markup: { inline_keyboard: [[{ text: '🎮 Play', callback_data: 'play' }], [{ text: '💵 Check Balance', callback_data: 'balance' }, { text: '💰 Deposit', callback_data: 'deposit' }], [{ text: '☎️ Contact Support', callback_data: 'support' }, { text: '📖 Instruction', callback_data: 'instruction' }], [{ text: '🤑 Withdraw', callback_data: 'withdraw' }, { text: '🔗 Invite', callback_data: 'invite' }]] } };
             return ctx.editMessageText(welcomeText, keyboard);
         });
 
@@ -459,7 +442,7 @@ function startTelegramBot({ BOT_TOKEN, WEBAPP_URL }) {
                     if (existing && (existing.isRegistered || existing.phone)) {
                         await ctx.reply('✅ You are already registered with this account.');
                         await ctx.reply('🎮 You can now continue using the menu.', { reply_markup: { remove_keyboard: true } });
-                        const keyboard = { reply_markup: { inline_keyboard: [[{ text: '🎮 Play', callback_data: 'play' }, { text: '📝 Register', callback_data: 'register' }], [{ text: '💵 Check Balance', callback_data: 'balance' }, { text: '💰 Deposit', callback_data: 'deposit' }], [{ text: '☎️ Contact Support', callback_data: 'support' }, { text: '📖 Instruction', callback_data: 'instruction' }], [{ text: '🎁 Transfer', callback_data: 'transfer' }, { text: '🤑 Withdraw', callback_data: 'withdraw' }], [{ text: '🔗 Invite', callback_data: 'invite' }]] } };
+                        const keyboard = { reply_markup: { inline_keyboard: [[{ text: '🎮 Play', callback_data: 'play' }], [{ text: '💵 Check Balance', callback_data: 'balance' }, { text: '💰 Deposit', callback_data: 'deposit' }], [{ text: '☎️ Contact Support', callback_data: 'support' }, { text: '📖 Instruction', callback_data: 'instruction' }], [{ text: '🤑 Withdraw', callback_data: 'withdraw' }, { text: '🔗 Invite', callback_data: 'invite' }]] } };
                         setTimeout(() => { ctx.reply('🎮 Choose an option:', keyboard); }, 800);
                         return;
                     }
@@ -478,7 +461,7 @@ function startTelegramBot({ BOT_TOKEN, WEBAPP_URL }) {
                 console.error('Contact registration error:', error);
                 ctx.reply('❌ Registration failed. Please try again.');
             }
-            const keyboard = { reply_markup: { inline_keyboard: [[{ text: '🎮 Play', callback_data: 'play' }, { text: '📝 Register', callback_data: 'register' }], [{ text: '💵 Check Balance', callback_data: 'balance' }, { text: '💰 Deposit', callback_data: 'deposit' }], [{ text: '☎️ Contact Support', callback_data: 'support' }, { text: '📖 Instruction', callback_data: 'instruction' }], [{ text: '🎁 Transfer', callback_data: 'transfer' }, { text: '🤑 Withdraw', callback_data: 'withdraw' }], [{ text: '🔗 Invite', callback_data: 'invite' }]] } };
+            const keyboard = { reply_markup: { inline_keyboard: [[{ text: '🎮 Play', callback_data: 'play' }], [{ text: '💵 Check Balance', callback_data: 'balance' }, { text: '💰 Deposit', callback_data: 'deposit' }], [{ text: '☎️ Contact Support', callback_data: 'support' }, { text: '📖 Instruction', callback_data: 'instruction' }], [{ text: '🤑 Withdraw', callback_data: 'withdraw' }, { text: '🔗 Invite', callback_data: 'invite' }]] } };
             setTimeout(() => { ctx.reply('🎮 Choose an option:', keyboard); }, 1000);
         });
 
