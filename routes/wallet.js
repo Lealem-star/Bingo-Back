@@ -1,5 +1,6 @@
 const express = require('express');
 const WalletService = require('../services/walletService');
+const UserService = require('../services/userService');
 const { authMiddleware } = require('./auth');
 
 const router = express.Router();
@@ -7,12 +8,20 @@ const router = express.Router();
 // GET /wallet
 router.get('/', authMiddleware, async (req, res) => {
     try {
-        const userId = req.userId;
-        const wallet = await WalletService.getWalletByUserId(userId);
-        if (!wallet) {
-            return res.status(404).json({ error: 'WALLET_NOT_FOUND' });
-        }
-        res.json({ wallet });
+        const telegramId = String(req.userId);
+        const user = await UserService.getUserByTelegramId(telegramId);
+        if (!user) return res.status(404).json({ error: 'USER_NOT_FOUND' });
+
+        const wallet = await WalletService.getWallet(user._id);
+        if (!wallet) return res.status(404).json({ error: 'WALLET_NOT_FOUND' });
+
+        // Return flat object for frontend expectations
+        res.json({
+            main: wallet.main,
+            play: wallet.play,
+            coins: wallet.coins,
+            gamesWon: wallet.gamesWon
+        });
     } catch (error) {
         console.error('Wallet fetch error:', error);
         res.status(500).json({ error: 'INTERNAL_SERVER_ERROR' });
@@ -22,23 +31,16 @@ router.get('/', authMiddleware, async (req, res) => {
 // POST /wallet/convert
 router.post('/convert', authMiddleware, async (req, res) => {
     try {
-        const { amount } = req.body;
-        const userId = req.userId;
-
-        if (!amount || isNaN(amount) || amount <= 0) {
+        const { coins } = req.body;
+        const telegramId = String(req.userId);
+        if (!coins || isNaN(coins) || Number(coins) <= 0) {
             return res.status(400).json({ error: 'INVALID_AMOUNT' });
         }
+        const user = await UserService.getUserByTelegramId(telegramId);
+        if (!user) return res.status(404).json({ error: 'USER_NOT_FOUND' });
 
-        const result = await WalletService.convertCoins(userId, parseFloat(amount));
-        if (!result.success) {
-            return res.status(400).json({ error: result.error });
-        }
-
-        res.json({
-            success: true,
-            newBalance: result.newBalance,
-            convertedAmount: result.convertedAmount
-        });
+        const result = await WalletService.convertCoins(user._id, Number(coins));
+        return res.json({ wallet: result.wallet });
     } catch (error) {
         console.error('Convert error:', error);
         res.status(500).json({ error: 'INTERNAL_SERVER_ERROR' });
