@@ -9,24 +9,25 @@ const router = express.Router();
 // GET /user/profile
 router.get('/profile', authMiddleware, async (req, res) => {
     try {
-        const userId = req.userId;
-        const userData = await UserService.getUserWithWallet(userId);
+        const telegramId = String(req.userId);
+        const userData = await UserService.getUserWithWallet(telegramId);
 
         if (!userData) {
             return res.status(404).json({ error: 'USER_NOT_FOUND' });
         }
 
-        // Get game statistics
+        // Get game statistics using Mongo ObjectId
+        const dbUserId = userData.user._id;
         const games = await Game.find({
             $or: [
-                { 'players.userId': userId },
-                { 'winners.userId': userId }
+                { 'players.userId': dbUserId },
+                { 'winners.userId': dbUserId }
             ]
         }).sort({ createdAt: -1 });
 
         const totalGames = games.length;
         const gamesWon = games.filter(game =>
-            game.winners.some(winner => winner.userId === userId)
+            game.winners.some(winner => String(winner.userId) === String(dbUserId))
         ).length;
 
         res.json({
