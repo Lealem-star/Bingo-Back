@@ -193,9 +193,14 @@ class WalletService {
     }
 
     // Get transaction history
-    static async getTransactionHistory(userId, limit = 50, skip = 0) {
+    static async getTransactionHistory(userId, type = null, limit = 50, skip = 0) {
         try {
-            const transactions = await Transaction.find({ userId })
+            const query = { userId };
+            if (type) {
+                query.type = type;
+            }
+
+            const transactions = await Transaction.find(query)
                 .sort({ createdAt: -1 })
                 .limit(limit)
                 .skip(skip);
@@ -206,6 +211,57 @@ class WalletService {
         } catch (error) {
             console.error('Error getting transaction history:', error);
             throw error;
+        }
+    }
+
+    // Process withdrawal request
+    static async processWithdrawal(userId, amount, destination) {
+        try {
+            const wallet = await this.getWallet(userId);
+            
+            if (wallet.main < amount) {
+                return { success: false, error: 'INSUFFICIENT_FUNDS' };
+            }
+
+            // Create pending withdrawal transaction
+            const transaction = new Transaction({
+                userId,
+                type: 'withdrawal',
+                amount,
+                status: 'pending',
+                description: `Withdrawal to ${destination}`,
+                metadata: { destination }
+            });
+
+            await transaction.save();
+
+            return { 
+                success: true, 
+                transactionId: transaction._id 
+            };
+        } catch (error) {
+            console.error('Error processing withdrawal:', error);
+            return { success: false, error: 'INTERNAL_ERROR' };
+        }
+    }
+
+    // Process withdrawal approval (admin)
+    static async processWithdrawalApproval(userId, amount) {
+        try {
+            const wallet = await this.getWallet(userId);
+            
+            if (wallet.main < amount) {
+                return { success: false, error: 'INSUFFICIENT_FUNDS' };
+            }
+
+            // Deduct from main wallet
+            wallet.main -= amount;
+            await wallet.save();
+
+            return { success: true };
+        } catch (error) {
+            console.error('Error processing withdrawal approval:', error);
+            return { success: false, error: 'INTERNAL_ERROR' };
         }
     }
 }
