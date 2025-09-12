@@ -10,7 +10,7 @@ const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'your_super_secret_jwt_key_here_change_this';
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
 
-// Dev auth helper (Telegram initData verification)
+// Telegram initData verification
 function verifyTelegramInitData(initData) {
     if (!initData || !BOT_TOKEN) return null;
     try {
@@ -57,34 +57,11 @@ function authMiddleware(req, res, next) {
 // POST /auth/telegram/verify
 router.post('/telegram/verify', async (req, res) => {
     try {
-        const { initData, devUserId } = req.body;
+        const { initData } = req.body;
         let user = null;
         let userId = null;
 
-        if (devUserId) {
-            // Dev fallback
-            userId = devUserId;
-            user = await UserService.getUserByTelegramId(userId);
-            if (!user) {
-                user = await UserService.createOrUpdateUser({
-                    id: parseInt(userId),
-                    first_name: 'Dev',
-                    last_name: 'User',
-                    username: 'dev_user'
-                });
-            }
-            // Ensure dev user has a wallet
-            if (user) {
-                const wallet = await WalletService.getWalletByUserId(userId);
-                if (!wallet) {
-                    await WalletService.createWallet(userId);
-                }
-                // Set default phone for dev user
-                if (!user.phone) {
-                    await UserService.updateUserPhone(userId, '+251900000000');
-                }
-            }
-        } else if (initData) {
+        if (initData) {
             // Telegram verification
             const telegramUser = verifyTelegramInitData(initData);
             if (!telegramUser) {
@@ -103,7 +80,7 @@ router.post('/telegram/verify', async (req, res) => {
                 }
             }
         } else {
-            return res.status(400).json({ error: 'MISSING_AUTH_DATA' });
+            return res.status(400).json({ error: 'MISSING_TELEGRAM_DATA' });
         }
 
         if (!user) {
