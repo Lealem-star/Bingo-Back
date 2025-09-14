@@ -74,9 +74,9 @@ router.post('/telegram/verify', async (req, res) => {
             }
             // Ensure user has a wallet
             if (user) {
-                const wallet = await WalletService.getWallet(userId);
+                const wallet = await WalletService.getWallet(user._id);
                 if (!wallet) {
-                    await WalletService.createWallet(userId);
+                    await WalletService.createWallet(user._id);
                 }
             }
         } else {
