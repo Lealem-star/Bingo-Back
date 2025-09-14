@@ -86,8 +86,12 @@ router.get('/summary', authMiddleware, async (req, res) => {
 // GET /user/transactions
 router.get('/transactions', authMiddleware, async (req, res) => {
     try {
-        const userId = req.userId;
-        const transactions = await WalletService.getTransactionHistory(userId);
+        const telegramUserId = req.userId;
+        const user = await UserService.getUserByTelegramId(telegramUserId);
+        if (!user) {
+            return res.status(404).json({ error: 'USER_NOT_FOUND' });
+        }
+        const transactions = await WalletService.getTransactionHistory(user._id);
         res.json({ transactions });
     } catch (error) {
         console.error('Transaction history error:', error);

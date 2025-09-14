@@ -50,8 +50,12 @@ router.post('/convert', authMiddleware, async (req, res) => {
 // GET /wallet/deposit-history
 router.get('/deposit-history', authMiddleware, async (req, res) => {
     try {
-        const userId = req.userId;
-        const transactions = await WalletService.getTransactionHistory(userId, 'deposit');
+        const telegramUserId = req.userId;
+        const user = await UserService.getUserByTelegramId(telegramUserId);
+        if (!user) {
+            return res.status(404).json({ error: 'USER_NOT_FOUND' });
+        }
+        const transactions = await WalletService.getTransactionHistory(user._id, 'deposit');
         res.json({ transactions });
     } catch (error) {
         console.error('Deposit history error:', error);
@@ -63,7 +67,7 @@ router.get('/deposit-history', authMiddleware, async (req, res) => {
 router.post('/withdraw', authMiddleware, async (req, res) => {
     try {
         const { amount, destination } = req.body;
-        const userId = req.userId;
+        const telegramUserId = req.userId;
 
         if (!amount || isNaN(amount) || amount < 50 || amount > 10000) {
             return res.status(400).json({ error: 'INVALID_AMOUNT' });
@@ -73,7 +77,12 @@ router.post('/withdraw', authMiddleware, async (req, res) => {
             return res.status(400).json({ error: 'DESTINATION_REQUIRED' });
         }
 
-        const result = await WalletService.processWithdrawal(userId, parseFloat(amount), destination.trim());
+        const user = await UserService.getUserByTelegramId(telegramUserId);
+        if (!user) {
+            return res.status(404).json({ error: 'USER_NOT_FOUND' });
+        }
+
+        const result = await WalletService.processWithdrawal(user._id, parseFloat(amount), destination.trim());
         if (!result.success) {
             return res.status(400).json({ error: result.error });
         }
