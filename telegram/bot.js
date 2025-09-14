@@ -259,11 +259,23 @@ function startTelegramBot({ BOT_TOKEN, WEBAPP_URL }) {
         }
 
         bot.action('play', async (ctx) => {
-            ctx.answerCbQuery('🎮 Opening game...');
-            const keyboard = { inline_keyboard: [[{ text: '🔙 Back to Menu', callback_data: 'back_to_menu' }]] };
-            if (isHttpsWebApp) { keyboard.inline_keyboard.unshift([{ text: '🌐 Open Web App', web_app: { url: WEBAPP_URL } }]); }
-            const note = isHttpsWebApp ? '' : '\n\n⚠️ Web App button hidden because Telegram requires HTTPS. Set WEBAPP_URL in .env to an https URL.';
-            ctx.reply('🎮 To play Bingo, please use our web app:' + note, { reply_markup: keyboard });
+            if (!(await requireRegistration(ctx))) return;
+
+            if (isHttpsWebApp) {
+                // Directly open the web app
+                ctx.answerCbQuery('🎮 Opening game...');
+                const keyboard = {
+                    reply_markup: {
+                        inline_keyboard: [[{ text: '🎮 Play Bingo', web_app: { url: WEBAPP_URL } }]]
+                    }
+                };
+                ctx.reply('🎮 Click below to start playing Bingo!', keyboard);
+            } else {
+                ctx.answerCbQuery('🎮 Opening game...');
+                const keyboard = { inline_keyboard: [[{ text: '🔙 Back to Menu', callback_data: 'back_to_menu' }]] };
+                const note = '\n\n⚠️ Web App button hidden because Telegram requires HTTPS. Set WEBAPP_URL in .env to an https URL.';
+                ctx.reply('🎮 To play Bingo, please use our web app:' + note, { reply_markup: keyboard });
+            }
         });
 
 
