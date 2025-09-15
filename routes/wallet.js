@@ -15,10 +15,9 @@ router.get('/', authMiddleware, async (req, res) => {
         const wallet = await WalletService.getWallet(user._id);
         if (!wallet) return res.status(404).json({ error: 'WALLET_NOT_FOUND' });
 
-        // Return flat object for frontend expectations
+        // Unified wallet response
         res.json({
-            main: wallet.main,
-            play: wallet.play,
+            balance: wallet.balance,
             coins: wallet.coins,
             gamesWon: wallet.gamesWon
         });

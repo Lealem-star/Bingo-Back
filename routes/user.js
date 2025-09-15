@@ -32,15 +32,19 @@ router.get('/profile', authMiddleware, async (req, res) => {
 
         res.json({
             user: {
-                firstName: userData.firstName,
-                lastName: userData.lastName,
-                phone: userData.phone,
-                isRegistered: userData.isRegistered,
+                firstName: userData.user.firstName,
+                lastName: userData.user.lastName,
+                phone: userData.user.phone,
+                isRegistered: userData.user.isRegistered,
                 totalGamesPlayed: totalGames,
                 totalGamesWon: gamesWon,
-                registrationDate: userData.createdAt
+                registrationDate: userData.user.createdAt
             },
-            wallet: userData.wallet
+            wallet: {
+                balance: userData.wallet?.balance ?? 0,
+                coins: userData.wallet?.coins ?? 0,
+                gamesWon: userData.wallet?.gamesWon ?? 0
+            }
         });
     } catch (error) {
         console.error('Profile fetch error:', error);

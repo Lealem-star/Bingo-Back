@@ -57,11 +57,14 @@ function makeRoom(stake) {
         id: `room_${stake}`,
         stake,
         phase: 'waiting', // waiting, registration, running, announce
+        currentGameId: null,
         players: new Map(), // userId -> { ws, cartella, name }
         selectedPlayers: new Set(), // userIds who have successfully bet
         calledNumbers: [],
         cartellas: new Map(), // userId -> cartella
         winners: [],
+        takenCards: new Set(), // numbers chosen during registration (1-100)
+        userCardSelections: new Map(), // userId -> cardNumber
         startTime: null,
         registrationEndTime: null,
         gameEndTime: null,
@@ -88,14 +91,22 @@ function makeRoom(stake) {
                 phase: room.phase,
                 playersCount: room.selectedPlayers.size,
                 calledNumbers: room.calledNumbers,
-                stake: room.stake
+                stake: room.stake,
+                takenCards: Array.from(room.takenCards),
+                yourSelection: room.userCardSelections.get(ws.userId) || null
             });
         },
         onLeave: (ws) => {
             room.players.delete(ws.userId);
             room.selectedPlayers.delete(ws.userId);
             room.cartellas.delete(ws.userId);
+            const prev = room.userCardSelections.get(ws.userId);
+            if (prev !== undefined && prev !== null) {
+                room.takenCards.delete(prev);
+                room.userCardSelections.delete(ws.userId);
+            }
             broadcast('players_update', { playersCount: room.selectedPlayers.size });
+            broadcast('registration_update', { takenCards: Array.from(room.takenCards) });
         }
     };
     return room;
@@ -116,10 +127,14 @@ function startRegistration(room) {
     room.phase = 'registration';
     room.registrationEndTime = Date.now() + 30000; // 30 seconds
     room.startTime = Date.now();
+    room.takenCards.clear();
+    room.userCardSelections.clear();
+    room.currentGameId = null;
     broadcast('registration_open', {
         stake: room.stake,
         playersCount: room.selectedPlayers.size,
-        duration: 30000
+        duration: 30000,
+        takenCards: []
     });
 
     setTimeout(() => {
@@ -140,6 +155,7 @@ function startGame(room) {
     room.calledNumbers = [];
     room.winners = [];
     room.gameEndTime = Date.now() + 300000; // 5 minutes max
+    room.currentGameId = `LB${Date.now()}`;
 
     // Generate cartellas for all players
     room.selectedPlayers.forEach(userId => {
@@ -152,12 +168,14 @@ function startGame(room) {
     });
 
     broadcast('game_started', {
+        gameId: room.currentGameId,
         stake: room.stake,
         playersCount: room.selectedPlayers.size,
         cartellas: Array.from(room.cartellas.entries()).map(([userId, cartella]) => ({
             userId,
             cartella
-        }))
+        })),
+        selections: Array.from(room.userCardSelections.entries()).map(([userId, cardNumber]) => ({ userId, cardNumber }))
     });
 
     // Start calling numbers
@@ -176,7 +194,7 @@ function callNextNumber(room) {
     } while (room.calledNumbers.includes(number));
 
     room.calledNumbers.push(number);
-    broadcast('number_called', { number, calledNumbers: room.calledNumbers });
+    broadcast('number_called', { gameId: room.currentGameId, number, calledNumbers: room.calledNumbers, value: number, called: room.calledNumbers });
 
     // Check for winners
     checkWinners(room);
@@ -202,6 +220,7 @@ function checkWinners(room) {
 function toAnnounce(room) {
     room.phase = 'announce';
     broadcast('game_ended', {
+        gameId: room.currentGameId,
         winners: room.winners,
         calledNumbers: room.calledNumbers,
         stake: room.stake
@@ -238,7 +257,7 @@ function toAnnounce(room) {
         game.save().catch(console.error);
     }
 
-    // Reset room after delay
+    // Reset room after delay, then immediately start a new registration round
     setTimeout(() => {
         room.phase = 'waiting';
         room.players.clear();
@@ -249,7 +268,9 @@ function toAnnounce(room) {
         room.startTime = null;
         room.registrationEndTime = null;
         room.gameEndTime = null;
-        broadcast('snapshot', { phase: 'waiting', playersCount: 0, calledNumbers: [], stake: room.stake });
+        broadcast('snapshot', { phase: 'waiting', playersCount: 0, calledNumbers: [], stake: room.stake, gameId: null, called: [] });
+        // Chain next round automatically
+        startRegistration(room);
     }, 10000);
 }
 
@@ -295,25 +316,14 @@ function checkBingo(cartella, calledNumbers) {
     return false;
 }
 
-// Auto-cycle through stakes
-setInterval(() => {
-    currentStakeIndex = (currentStakeIndex + 1) % stakes.length;
-    const stake = stakes[currentStakeIndex];
-
-    if (!rooms.has(stake)) {
-        rooms.set(stake, makeRoom(stake));
-    }
-
-    const room = rooms.get(stake);
-    if (room.phase === 'waiting') {
-        startRegistration(room);
-    }
-}, 60000); // Every minute
+// Removed minute-based auto-cycler. Rounds will be chained after each game ends,
+// and initial registration will start at server boot.
 
 // WebSocket connection handling
 wss.on('connection', async (ws, request) => {
     const url = new URL(request.url, `http://${request.headers.host}`);
     const token = url.searchParams.get('token') || '';
+    const stakeParam = Number(url.searchParams.get('stake') || '');
 
     try {
         const payload = jwt.verify(token, JWT_SECRET);
@@ -321,6 +331,15 @@ wss.on('connection', async (ws, request) => {
     } catch (error) {
         ws.close(1008, 'Invalid token');
         return;
+    }
+
+    // Auto-join room based on URL stake param (aligns with frontend behavior)
+    if (!Number.isNaN(stakeParam) && stakes.includes(stakeParam)) {
+        if (!rooms.has(stakeParam)) {
+            rooms.set(stakeParam, makeRoom(stakeParam));
+        }
+        const room = rooms.get(stakeParam);
+        await room.onJoin(ws);
     }
 
     ws.on('message', (message) => {
@@ -333,6 +352,24 @@ wss.on('connection', async (ws, request) => {
                 }
                 const room = rooms.get(stake);
                 room.onJoin(ws);
+            } else if (data.type === 'select_card') {
+                const room = ws.room;
+                const cardNumber = Number(data.cardNumber || data.payload?.cardNumber);
+                if (room && room.phase === 'registration' && Number.isInteger(cardNumber) && cardNumber >= 1 && cardNumber <= 100) {
+                    const previous = room.userCardSelections.get(ws.userId);
+                    if (previous) {
+                        room.takenCards.delete(previous);
+                    }
+                    if (room.takenCards.has(cardNumber)) {
+                        // Already taken, notify user
+                        ws.send(JSON.stringify({ type: 'selection_rejected', payload: { reason: 'TAKEN', cardNumber } }));
+                        return;
+                    }
+                    room.userCardSelections.set(ws.userId, cardNumber);
+                    room.takenCards.add(cardNumber);
+                    ws.send(JSON.stringify({ type: 'selection_confirmed', payload: { cardNumber } }));
+                    broadcast('registration_update', { takenCards: Array.from(room.takenCards) });
+                }
             } else if (data.type === 'claim_bingo') {
                 const room = ws.room;
                 if (room && room.phase === 'running') {
@@ -371,6 +408,16 @@ server.on('upgrade', (request, socket, head) => {
 server.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
     console.log(`🌐 WebSocket available at ws://localhost:${PORT}/ws`);
+    // Initialize rooms and start first registration for each stake at server startup
+    stakes.forEach((stake) => {
+        if (!rooms.has(stake)) {
+            rooms.set(stake, makeRoom(stake));
+        }
+        const room = rooms.get(stake);
+        if (room.phase === 'waiting') {
+            startRegistration(room);
+        }
+    });
 });
 
 // Start Telegram bot

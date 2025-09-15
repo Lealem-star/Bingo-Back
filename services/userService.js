@@ -58,8 +58,7 @@ class UserService {
 
             const newWallet = new Wallet({
                 userId,
-                main: 0,
-                play: 0,
+                balance: 0,
                 coins: 0,
                 gamesWon: 0
             });

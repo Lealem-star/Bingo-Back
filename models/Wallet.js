@@ -7,19 +7,14 @@ const walletSchema = new mongoose.Schema({
         required: true,
         unique: true
     },
-    main: {
+    balance: {
         type: Number,
         default: 0,
         min: 0
     },
-    play: {
-        type: Number,
-        default: 50,
-        min: 0
-    },
     coins: {
         type: Number,
-        default: 1,
+        default: 0,
         min: 0
     },
     gamesWon: {

@@ -22,9 +22,8 @@ class WalletService {
         try {
             const wallet = new Wallet({
                 userId,
-                main: 0,
-                play: 50,
-                coins: 1,
+                balance: 0,
+                coins: 0,
                 gamesWon: 0
             });
             await wallet.save();
@@ -44,14 +43,12 @@ class WalletService {
             }
 
             const balanceBefore = {
-                main: wallet.main,
-                play: wallet.play,
+                balance: wallet.balance,
                 coins: wallet.coins
             };
 
             // Update balances
-            if (updates.main !== undefined) wallet.main = Math.max(0, wallet.main + updates.main);
-            if (updates.play !== undefined) wallet.play = Math.max(0, wallet.play + updates.play);
+            if (updates.balance !== undefined) wallet.balance = Math.max(0, wallet.balance + updates.balance);
             if (updates.coins !== undefined) wallet.coins = Math.max(0, wallet.coins + updates.coins);
             if (updates.gamesWon !== undefined) wallet.gamesWon += updates.gamesWon;
 
@@ -61,8 +58,7 @@ class WalletService {
                 wallet,
                 balanceBefore,
                 balanceAfter: {
-                    main: wallet.main,
-                    play: wallet.play,
+                    balance: wallet.balance,
                     coins: wallet.coins
                 }
             };
@@ -75,14 +71,21 @@ class WalletService {
     // Process deposit
     static async processDeposit(userId, amount, smsData = null) {
         try {
-            const result = await this.updateBalance(userId, { main: amount });
+            // Credit fiat balance
+            const result = await this.updateBalance(userId, { balance: amount });
+
+            // Gift coins: 50 birr -> 10 coins => 0.2 coin per birr
+            const giftCoins = Math.floor(amount * 0.2);
+            if (giftCoins > 0) {
+                await this.updateBalance(userId, { coins: giftCoins });
+            }
 
             // Create transaction record
             const transaction = new Transaction({
                 userId,
                 type: 'deposit',
                 amount,
-                description: `Deposit via SMS: ETB ${amount}`,
+                description: `Deposit via SMS: ETB ${amount}${giftCoins ? ` (+${giftCoins} coins gift)` : ''}`,
                 reference: smsData?.ref || null,
                 smsData,
                 balanceBefore: result.balanceBefore,
@@ -106,7 +109,7 @@ class WalletService {
         }
     }
 
-    // Convert coins to play balance
+    // Convert coins to fiat balance at 100 coins = 1 birr
     static async convertCoins(userId, coins) {
         try {
             const wallet = await Wallet.findOne({ userId });
@@ -118,17 +121,24 @@ class WalletService {
                 throw new Error('Insufficient coins');
             }
 
+            // Conversion rate: 100 coins -> 1 birr
+            const birrAmount = Math.floor(coins / 100);
+            if (birrAmount <= 0) {
+                throw new Error('MIN_CONVERSION_NOT_MET');
+            }
+
+            const coinsToDeduct = birrAmount * 100;
             const result = await this.updateBalance(userId, {
-                coins: -coins,
-                play: coins
+                coins: -coinsToDeduct,
+                balance: birrAmount
             });
 
             // Create transaction record
             const transaction = new Transaction({
                 userId,
                 type: 'coin_conversion',
-                amount: coins,
-                description: `Converted ${coins} coins to play balance`,
+                amount: birrAmount,
+                description: `Converted ${coinsToDeduct} coins to ETB ${birrAmount}`,
                 balanceBefore: result.balanceBefore,
                 balanceAfter: result.balanceAfter
             });
@@ -144,7 +154,7 @@ class WalletService {
     // Process game bet
     static async processGameBet(userId, amount, gameId) {
         try {
-            const result = await this.updateBalance(userId, { play: -amount });
+            const result = await this.updateBalance(userId, { balance: -amount });
 
             // Create transaction record
             const transaction = new Transaction({
@@ -169,7 +179,7 @@ class WalletService {
     static async processGameWin(userId, amount, gameId) {
         try {
             const result = await this.updateBalance(userId, {
-                main: amount,
+                balance: amount,
                 gamesWon: 1
             });
 
@@ -218,8 +228,8 @@ class WalletService {
     static async processWithdrawal(userId, amount, destination) {
         try {
             const wallet = await this.getWallet(userId);
-            
-            if (wallet.main < amount) {
+
+            if (wallet.balance < amount) {
                 return { success: false, error: 'INSUFFICIENT_FUNDS' };
             }
 
@@ -235,9 +245,9 @@ class WalletService {
 
             await transaction.save();
 
-            return { 
-                success: true, 
-                transactionId: transaction._id 
+            return {
+                success: true,
+                transactionId: transaction._id
             };
         } catch (error) {
             console.error('Error processing withdrawal:', error);
@@ -249,13 +259,13 @@ class WalletService {
     static async processWithdrawalApproval(userId, amount) {
         try {
             const wallet = await this.getWallet(userId);
-            
-            if (wallet.main < amount) {
+
+            if (wallet.balance < amount) {
                 return { success: false, error: 'INSUFFICIENT_FUNDS' };
             }
 
-            // Deduct from main wallet
-            wallet.main -= amount;
+            // Deduct from balance
+            wallet.balance -= amount;
             await wallet.save();
 
             return { success: true };
