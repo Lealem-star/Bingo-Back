@@ -367,7 +367,9 @@ wss.on('connection', async (ws, request) => {
                     }
                     room.userCardSelections.set(ws.userId, cardNumber);
                     room.takenCards.add(cardNumber);
-                    ws.send(JSON.stringify({ type: 'selection_confirmed', payload: { cardNumber } }));
+                    ws.send(JSON.stringify({ type: 'selection_confirmed', payload: { cardNumber, playersCount: room.selectedPlayers.size } }));
+                    // Immediately inform all clients about players count to update UI top bar
+                    broadcast('players_update', { playersCount: room.selectedPlayers.size });
                     broadcast('registration_update', { takenCards: Array.from(room.takenCards) });
                 }
             } else if (data.type === 'claim_bingo') {
