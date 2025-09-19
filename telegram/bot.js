@@ -102,7 +102,7 @@ function startTelegramBot({ BOT_TOKEN, WEBAPP_URL }) {
         bot.command('admin', async (ctx) => {
             if (!(await isAdminByDB(ctx.from.id))) { return ctx.reply('Unauthorized'); }
             const adminText = '🛠️ Admin Panel';
-            const adminOpen = WEBAPP_URL ? [{ text: '🌐 Open Admin Panel', web_app: { url: (WEBAPP_URL || '').replace(/\/$/, '') + '#admin' } }] : [];
+            const adminOpen = WEBAPP_URL ? [{ text: '🌐 Open Admin Panel', web_app: { url: (WEBAPP_URL || 'https://bingo-frontend-28pi.onrender.com').replace(/\/$/, '') + '#admin' } }] : [];
             const keyboard = { reply_markup: { inline_keyboard: [adminOpen, [{ text: '📈 Today Revenue (20%)', callback_data: 'admin_today_revenue' }], [{ text: '📊 This Week Revenue (20%)', callback_data: 'admin_week_revenue' }], [{ text: '📣 Broadcast', callback_data: 'admin_broadcast' }]].filter(row => row.length) } };
             return ctx.reply(adminText, keyboard);
         });
