@@ -102,8 +102,20 @@ function startTelegramBot({ BOT_TOKEN, WEBAPP_URL }) {
         bot.command('admin', async (ctx) => {
             if (!(await isAdminByDB(ctx.from.id))) { return ctx.reply('Unauthorized'); }
             const adminText = '🛠️ Admin Panel';
-            const adminOpen = WEBAPP_URL ? [{ text: '🌐 Open Admin Panel', web_app: { url: (WEBAPP_URL || 'https://bingo-frontend-28pi.onrender.com').replace(/\/$/, '') + '#admin' } }] : [];
-            const keyboard = { reply_markup: { inline_keyboard: [adminOpen, [{ text: '📈 Today Revenue (20%)', callback_data: 'admin_today_revenue' }], [{ text: '📊 This Week Revenue (20%)', callback_data: 'admin_week_revenue' }], [{ text: '📣 Broadcast', callback_data: 'admin_broadcast' }]].filter(row => row.length) } };
+
+            // Construct admin URL more reliably
+            let adminUrl = 'https://bingo-frontend-28pi.onrender.com#admin';
+            if (WEBAPP_URL && WEBAPP_URL !== 'undefined') {
+                const baseUrl = WEBAPP_URL.replace(/\/$/, '');
+                adminUrl = `${baseUrl}#admin`;
+            }
+
+            // Debug logging
+            console.log('WEBAPP_URL:', WEBAPP_URL);
+            console.log('Final admin URL:', adminUrl);
+
+            const adminOpen = [{ text: '🌐 Open Admin Panel', web_app: { url: adminUrl } }];
+            const keyboard = { reply_markup: { inline_keyboard: [adminOpen, [{ text: '📈 Today Revenue (20%)', callback_data: 'admin_today_revenue' }], [{ text: '📊 This Week Revenue (20%)', callback_data: 'admin_week_revenue' }], [{ text: '📣 Broadcast', callback_data: 'admin_broadcast' }]] } };
             return ctx.reply(adminText, keyboard);
         });
 
