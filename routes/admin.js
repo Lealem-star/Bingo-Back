@@ -1,10 +1,46 @@
 const express = require('express');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 const Transaction = require('../models/Transaction');
 const Game = require('../models/Game');
 const Post = require('../models/Post');
 const { authMiddleware } = require('./auth');
 
 const router = express.Router();
+
+// Configure multer for file uploads
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        const uploadDir = path.join(__dirname, '..', 'uploads');
+        if (!fs.existsSync(uploadDir)) {
+            fs.mkdirSync(uploadDir, { recursive: true });
+        }
+        cb(null, uploadDir);
+    },
+    filename: (req, file, cb) => {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+    }
+});
+
+const upload = multer({ 
+    storage: storage,
+    limits: {
+        fileSize: 50 * 1024 * 1024 // 50MB limit
+    },
+    fileFilter: (req, file, cb) => {
+        const allowedTypes = /jpeg|jpg|png|gif|mp4|mov|avi|webm/;
+        const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+        const mimetype = allowedTypes.test(file.mimetype);
+        
+        if (mimetype && extname) {
+            return cb(null, true);
+        } else {
+            cb(new Error('Only images and videos are allowed'));
+        }
+    }
+});
 
 // Admin middleware
 function adminMiddleware(req, res, next) {
@@ -104,13 +140,35 @@ router.get('/posts', adminMiddleware, async (req, res) => {
     } catch (e) { res.status(500).json({ error: 'INTERNAL_SERVER_ERROR' }); }
 });
 
-router.post('/posts', adminMiddleware, async (req, res) => {
+router.post('/posts', adminMiddleware, upload.single('file'), async (req, res) => {
     try {
-        const { kind, url, caption, active } = req.body || {};
-        if (!kind || !url) return res.status(400).json({ error: 'INVALID_INPUT' });
-        const post = await Post.create({ kind, url, caption: caption || '', active: active !== false });
+        const { kind, caption, active } = req.body || {};
+        
+        if (!kind) return res.status(400).json({ error: 'INVALID_INPUT' });
+        
+        let url = '';
+        let filename = '';
+        
+        if (req.file) {
+            // File upload
+            filename = req.file.filename;
+            url = `/uploads/${filename}`;
+        } else {
+            return res.status(400).json({ error: 'NO_FILE_UPLOADED' });
+        }
+        
+        const post = await Post.create({ 
+            kind, 
+            url, 
+            filename,
+            caption: caption || '', 
+            active: active !== false 
+        });
         res.json({ success: true, post });
-    } catch (e) { res.status(500).json({ error: 'INTERNAL_SERVER_ERROR' }); }
+    } catch (e) { 
+        console.error('Post creation error:', e);
+        res.status(500).json({ error: 'INTERNAL_SERVER_ERROR' }); 
+    }
 });
 
 router.patch('/posts/:id', adminMiddleware, async (req, res) => {
