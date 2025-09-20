@@ -60,8 +60,12 @@ function startTelegramBot({ BOT_TOKEN, WEBAPP_URL }) {
         async function isAdminByDB(telegramId) {
             try {
                 const user = await require('../models/User').findOne({ telegramId: String(telegramId) }, { role: 1 });
-                return !!(user && user.role === 'admin');
-            } catch { return false; }
+                console.log('Admin check for user:', telegramId, 'User found:', user);
+                return !!(user && (user.role === 'admin' || user.role === 'super_admin'));
+            } catch (e) {
+                console.error('Admin check error:', e);
+                return false;
+            }
         }
 
         bot.start(async (ctx) => {
@@ -128,6 +132,7 @@ function startTelegramBot({ BOT_TOKEN, WEBAPP_URL }) {
             const parts = (ctx.message.text || '').trim().split(/\s+/);
             const code = parts[1] || '';
             const expected = process.env.ADMIN_BOOT_CODE || '';
+            console.log('Admin boot attempt:', { telegramId: ctx.from.id, code, expected });
             if (!expected) return ctx.reply('Boot code not configured.');
             if (code !== expected) return ctx.reply('Invalid code.');
             if (!isDbReady()) return ctx.reply('Database is not connected yet. Please try again in a moment.');
@@ -147,6 +152,7 @@ function startTelegramBot({ BOT_TOKEN, WEBAPP_URL }) {
                     },
                     { new: true, upsert: true }
                 );
+                console.log('Admin boot result:', user);
                 if (user) return ctx.reply('✅ You are now an admin. Use /admin');
                 return ctx.reply('User not found. Start the bot first.');
             } catch (e) {
