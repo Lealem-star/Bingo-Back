@@ -32,6 +32,16 @@ app.use(express.urlencoded({ extended: true }));
 // JWT secret
 const JWT_SECRET = process.env.JWT_SECRET || 'your_super_secret_jwt_key_here_change_this';
 
+// Health check endpoint to keep service alive
+app.get('/health', (req, res) => {
+    res.json({
+        status: 'ok',
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime(),
+        memory: process.memoryUsage()
+    });
+});
+
 // Use routes
 app.use('/auth', authRoutes);
 app.use('/wallet', walletRoutes);
@@ -410,6 +420,28 @@ server.on('upgrade', (request, socket, head) => {
 server.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
     console.log(`🌐 WebSocket available at ws://localhost:${PORT}/ws`);
+
+    // Keep-alive mechanism to prevent Render from sleeping
+    setInterval(() => {
+        const http = require('http');
+        const options = {
+            hostname: 'localhost',
+            port: PORT,
+            path: '/health',
+            method: 'GET'
+        };
+
+        const req = http.request(options, (res) => {
+            console.log('💓 Health check ping - service alive');
+        });
+
+        req.on('error', (err) => {
+            console.error('💔 Health check failed:', err.message);
+        });
+
+        req.end();
+    }, 300000); // Ping every 5 minutes
+
     // Initialize rooms and start first registration for each stake at server startup
     stakes.forEach((stake) => {
         if (!rooms.has(stake)) {

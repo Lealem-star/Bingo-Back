@@ -729,24 +729,52 @@ function startTelegramBot({ BOT_TOKEN, WEBAPP_URL }) {
         });
 
         // Handle bot conflicts gracefully
+        // Add global error handling
+        bot.catch((err, ctx) => {
+            console.error('Bot error:', err);
+            if (ctx) {
+                ctx.reply('❌ An error occurred. Please try again.').catch(() => { });
+            }
+        });
+
         bot.telegram.deleteWebhook({ drop_pending_updates: true }).catch(() => { });
 
-        // Add retry logic for bot conflicts
+        // Add retry logic for bot conflicts and keep-alive
         const startBot = async (retries = 3) => {
             try {
                 const me = await bot.telegram.getMe();
                 console.log(`🤖 Starting Telegram bot @${me.username}`);
                 await bot.launch();
                 console.log('✅ Telegram bot started with long polling');
+
+                // Add keep-alive mechanism
+                setInterval(async () => {
+                    try {
+                        await bot.telegram.getMe();
+                        console.log('💓 Bot heartbeat - still alive');
+                    } catch (err) {
+                        console.error('💔 Bot heartbeat failed:', err.message);
+                        // Try to restart the bot
+                        try {
+                            await bot.stop();
+                            console.log('🔄 Restarting bot...');
+                            await bot.launch();
+                            console.log('✅ Bot restarted successfully');
+                        } catch (restartErr) {
+                            console.error('❌ Failed to restart bot:', restartErr);
+                        }
+                    }
+                }, 300000); // Check every 5 minutes
+
             } catch (err) {
                 if (err.code === 409 && retries > 0) {
                     console.log(`⚠️ Bot conflict detected, retrying in 10 seconds... (${retries} retries left)`);
-                    await new Promise(resolve => setTimeout(resolve, 10000)); // Increased wait time
+                    await new Promise(resolve => setTimeout(resolve, 10000));
                     return startBot(retries - 1);
                 } else if (err.code === 409 && retries === 0) {
                     console.log('⚠️ Bot conflict persists after all retries. Bot may already be running elsewhere.');
                     console.log('⚠️ This is normal if you have multiple bot instances or the bot is already running.');
-                    return; // Don't throw error, just log and continue
+                    return;
                 }
                 console.error('❌ Failed to start Telegram bot:', err);
             }
@@ -754,8 +782,26 @@ function startTelegramBot({ BOT_TOKEN, WEBAPP_URL }) {
 
         startBot();
 
-        process.once('SIGINT', () => bot.stop('SIGINT'));
-        process.once('SIGTERM', () => bot.stop('SIGTERM'));
+        // Add process error handlers
+        process.on('uncaughtException', (err) => {
+            console.error('Uncaught Exception:', err);
+            // Don't exit, just log the error
+        });
+
+        process.on('unhandledRejection', (reason, promise) => {
+            console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+            // Don't exit, just log the error
+        });
+
+        process.once('SIGINT', () => {
+            console.log('🛑 Received SIGINT, stopping bot...');
+            bot.stop('SIGINT');
+        });
+
+        process.once('SIGTERM', () => {
+            console.log('🛑 Received SIGTERM, stopping bot...');
+            bot.stop('SIGTERM');
+        });
     } catch { }
 }
 
