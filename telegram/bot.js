@@ -107,11 +107,16 @@ function startTelegramBot({ BOT_TOKEN, WEBAPP_URL }) {
             if (!(await isAdminByDB(ctx.from.id))) { return ctx.reply('Unauthorized'); }
             const adminText = '🛠️ Admin Panel';
 
-            // Construct admin URL more reliably
+            // Construct admin URL more reliably - always include #admin
             let adminUrl = 'https://bingo-frontend-28pi.onrender.com#admin';
             if (WEBAPP_URL && WEBAPP_URL !== 'undefined') {
                 const baseUrl = WEBAPP_URL.replace(/\/$/, '');
                 adminUrl = `${baseUrl}#admin`;
+            }
+
+            // Force admin URL - ensure it always has #admin
+            if (!adminUrl.includes('#admin')) {
+                adminUrl = adminUrl + '#admin';
             }
 
             // Debug logging
