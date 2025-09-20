@@ -73,9 +73,18 @@ function startTelegramBot({ BOT_TOKEN, WEBAPP_URL }) {
             const isAdmin = await isAdminByDB(ctx.from.id);
             if (isAdmin) {
                 const adminText = '🛠️ Admin Panel';
-                const keyboard = { reply_markup: { inline_keyboard: [[{ text: '📈 Today Revenue (20%)', callback_data: 'admin_today_revenue' }], [{ text: '📊 This Week Revenue (20%)', callback_data: 'admin_week_revenue' }], [{ text: '📣 Broadcast', callback_data: 'admin_broadcast' }]] } };
-                const photoPath = path.join(__dirname, '..', 'static', 'lb.png');
-                const photo = fs.existsSync(photoPath) ? { source: fs.createReadStream(photoPath) } : (WEBAPP_URL || '').replace(/\/$/, '') + '/lb.png';
+
+                // Construct admin URL using query parameters instead of hash
+                let adminUrl = 'https://bingo-frontend-28pi.onrender.com?admin=true';
+                if (WEBAPP_URL && WEBAPP_URL !== 'undefined') {
+                    const baseUrl = WEBAPP_URL.replace(/\/$/, '');
+                    adminUrl = `${baseUrl}?admin=true`;
+                }
+
+                const adminOpen = [{ text: '🌐 Open Admin Panel', web_app: { url: adminUrl } }];
+                const keyboard = { reply_markup: { inline_keyboard: [adminOpen, [{ text: '📣 Broadcast', callback_data: 'admin_broadcast' }]] } };
+                const photoPath = path.join(__dirname, '..', 'static', 'wellcome.jpg');
+                const photo = fs.existsSync(photoPath) ? { source: fs.createReadStream(photoPath) } : (WEBAPP_URL || '').replace(/\/$/, '') + '/wellcome.jpg';
                 return ctx.replyWithPhoto(photo, { caption: adminText, reply_markup: keyboard.reply_markup });
             }
             try {
@@ -119,8 +128,12 @@ function startTelegramBot({ BOT_TOKEN, WEBAPP_URL }) {
             console.log('Final admin URL:', adminUrl);
 
             const adminOpen = [{ text: '🌐 Open Admin Panel', web_app: { url: adminUrl } }];
-            const keyboard = { reply_markup: { inline_keyboard: [adminOpen, [{ text: '📈 Today Revenue (20%)', callback_data: 'admin_today_revenue' }], [{ text: '📊 This Week Revenue (20%)', callback_data: 'admin_week_revenue' }], [{ text: '📣 Broadcast', callback_data: 'admin_broadcast' }]] } };
-            return ctx.reply(adminText, keyboard);
+            const keyboard = { reply_markup: { inline_keyboard: [adminOpen, [{ text: '📣 Broadcast', callback_data: 'admin_broadcast' }]] } };
+
+            // Send admin panel with welcome image
+            const photoPath = path.join(__dirname, '..', 'static', 'wellcome.jpg');
+            const photo = fs.existsSync(photoPath) ? { source: fs.createReadStream(photoPath) } : (WEBAPP_URL || '').replace(/\/$/, '') + '/wellcome.jpg';
+            return ctx.replyWithPhoto(photo, { caption: adminText, reply_markup: keyboard.reply_markup });
         });
 
         // One-time bootstrap: promote caller to admin with secret code
@@ -188,42 +201,23 @@ function startTelegramBot({ BOT_TOKEN, WEBAPP_URL }) {
             } catch { return ctx.reply('Failed to demote.'); }
         });
 
-        bot.action('admin_today_revenue', async (ctx) => {
-            if (!(await ensureAdmin(ctx))) return;
-            try {
-                const start = new Date(); start.setHours(0, 0, 0, 0);
-                const end = new Date(); end.setHours(23, 59, 59, 999);
-                let todayRevenue = 0;
-                try {
-                    const games = await Game.find({ status: 'finished', finishedAt: { $gte: start, $lte: end } }, { systemCut: 1 });
-                    todayRevenue = games.reduce((sum, g) => sum + (g.systemCut || 0), 0);
-                } catch (e) { todayRevenue = 0; }
-                await ctx.answerCbQuery('');
-                await ctx.reply(`📈 Today System Revenue (20% per game): ETB ${todayRevenue.toFixed(2)}`, { reply_markup: { inline_keyboard: [[{ text: '🔙 Back', callback_data: 'back_to_admin' }]] } });
-            } catch { await ctx.reply('❌ Failed to fetch today revenue'); }
-        });
 
         bot.action('back_to_admin', async (ctx) => {
             if (!(await ensureAdmin(ctx))) return;
             const adminText = '🛠️ Admin Panel';
-            const keyboard = { reply_markup: { inline_keyboard: [[{ text: '📈 Today Revenue (20%)', callback_data: 'admin_today_revenue' }], [{ text: '📊 This Week Revenue (20%)', callback_data: 'admin_week_revenue' }], [{ text: '📣 Broadcast', callback_data: 'admin_broadcast' }]] } };
+
+            // Construct admin URL using query parameters instead of hash
+            let adminUrl = 'https://bingo-frontend-28pi.onrender.com?admin=true';
+            if (WEBAPP_URL && WEBAPP_URL !== 'undefined') {
+                const baseUrl = WEBAPP_URL.replace(/\/$/, '');
+                adminUrl = `${baseUrl}?admin=true`;
+            }
+
+            const adminOpen = [{ text: '🌐 Open Admin Panel', web_app: { url: adminUrl } }];
+            const keyboard = { reply_markup: { inline_keyboard: [adminOpen, [{ text: '📣 Broadcast', callback_data: 'admin_broadcast' }]] } };
             await ctx.editMessageText(adminText, keyboard).catch(() => ctx.reply(adminText, keyboard));
         });
 
-        bot.action('admin_week_revenue', async (ctx) => {
-            if (!(await ensureAdmin(ctx))) return;
-            try {
-                const now = new Date();
-                const day = now.getDay();
-                const diffToMonday = (day === 0 ? -6 : 1 - day);
-                const monday = new Date(now); monday.setHours(0, 0, 0, 0); monday.setDate(monday.getDate() + diffToMonday);
-                const sunday = new Date(monday); sunday.setDate(sunday.getDate() + 6); sunday.setHours(23, 59, 59, 999);
-                let weekRevenue = 0;
-                try { const games = await Game.find({ status: 'finished', finishedAt: { $gte: monday, $lte: sunday } }, { systemCut: 1 }); weekRevenue = games.reduce((s, g) => s + (g.systemCut || 0), 0); } catch { weekRevenue = 0; }
-                await ctx.answerCbQuery('');
-                await ctx.reply(`📊 This Week System Revenue (20% per game): ETB ${weekRevenue.toFixed(2)}`, { reply_markup: { inline_keyboard: [[{ text: '🔙 Back', callback_data: 'back_to_admin' }]] } });
-            } catch { await ctx.reply('❌ Failed to fetch weekly revenue'); }
-        });
 
         const adminStates = new Map();
         async function getBroadcastTargets() {
