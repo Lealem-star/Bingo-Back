@@ -24,7 +24,7 @@ const storage = multer.diskStorage({
     }
 });
 
-const upload = multer({ 
+const upload = multer({
     storage: storage,
     limits: {
         fileSize: 50 * 1024 * 1024 // 50MB limit
@@ -33,7 +33,7 @@ const upload = multer({
         const allowedTypes = /jpeg|jpg|png|gif|mp4|mov|avi|webm/;
         const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
         const mimetype = allowedTypes.test(file.mimetype);
-        
+
         if (mimetype && extname) {
             return cb(null, true);
         } else {
@@ -44,9 +44,26 @@ const upload = multer({
 
 // Admin middleware
 function adminMiddleware(req, res, next) {
+    console.log('Admin middleware check:', {
+        method: req.method,
+        path: req.path,
+        headers: {
+            authorization: req.headers.authorization ? 'Present' : 'Missing',
+            'x-session': req.headers['x-session'] ? 'Present' : 'Missing'
+        }
+    });
+    
     // For now, we'll use the same auth middleware
     // In production, you might want to add additional admin role checks
-    return authMiddleware(req, res, next);
+    return authMiddleware(req, res, (err) => {
+        if (err) {
+            console.error('Admin middleware auth error:', err);
+            return res.status(401).json({ error: 'UNAUTHORIZED' });
+        }
+        
+        console.log('Admin middleware passed, userId:', req.userId);
+        next();
+    });
 }
 
 // POST /admin/withdrawals/:id/approve
@@ -142,9 +159,22 @@ router.get('/posts', adminMiddleware, async (req, res) => {
 
 router.post('/posts', adminMiddleware, upload.single('file'), async (req, res) => {
     try {
+        console.log('File upload request received:', {
+            body: req.body,
+            file: req.file ? {
+                filename: req.file.filename,
+                originalname: req.file.originalname,
+                mimetype: req.file.mimetype,
+                size: req.file.size
+            } : 'No file'
+        });
+
         const { kind, caption, active } = req.body || {};
         
-        if (!kind) return res.status(400).json({ error: 'INVALID_INPUT' });
+        if (!kind) {
+            console.log('Missing kind field');
+            return res.status(400).json({ error: 'INVALID_INPUT' });
+        }
         
         let url = '';
         let filename = '';
@@ -153,17 +183,24 @@ router.post('/posts', adminMiddleware, upload.single('file'), async (req, res) =
             // File upload
             filename = req.file.filename;
             url = `/uploads/${filename}`;
+            console.log('File processed:', { filename, url });
         } else {
+            console.log('No file uploaded');
             return res.status(400).json({ error: 'NO_FILE_UPLOADED' });
         }
+        
+        // Convert active string to boolean
+        const isActive = active === 'true' || active === true;
         
         const post = await Post.create({ 
             kind, 
             url, 
             filename,
             caption: caption || '', 
-            active: active !== false 
+            active: isActive
         });
+        
+        console.log('Post created successfully:', post);
         res.json({ success: true, post });
     } catch (e) { 
         console.error('Post creation error:', e);
