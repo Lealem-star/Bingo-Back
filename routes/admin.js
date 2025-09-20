@@ -12,15 +12,35 @@ const router = express.Router();
 // Configure multer for file uploads
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
-        const uploadDir = path.join(__dirname, '..', 'uploads');
-        if (!fs.existsSync(uploadDir)) {
-            fs.mkdirSync(uploadDir, { recursive: true });
+        try {
+            const uploadDir = path.join(__dirname, '..', 'uploads');
+            console.log('Upload directory:', uploadDir);
+            
+            if (!fs.existsSync(uploadDir)) {
+                console.log('Creating upload directory:', uploadDir);
+                fs.mkdirSync(uploadDir, { recursive: true });
+            }
+            
+            // Check if directory is writable
+            fs.access(uploadDir, fs.constants.W_OK, (err) => {
+                if (err) {
+                    console.error('Upload directory is not writable:', err);
+                    cb(new Error('Upload directory is not writable'));
+                } else {
+                    console.log('Upload directory is writable');
+                    cb(null, uploadDir);
+                }
+            });
+        } catch (error) {
+            console.error('Error setting up upload directory:', error);
+            cb(error);
         }
-        cb(null, uploadDir);
     },
     filename: (req, file, cb) => {
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+        const filename = file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname);
+        console.log('Generated filename:', filename);
+        cb(null, filename);
     }
 });
 
@@ -157,7 +177,21 @@ router.get('/posts', adminMiddleware, async (req, res) => {
     } catch (e) { res.status(500).json({ error: 'INTERNAL_SERVER_ERROR' }); }
 });
 
-router.post('/posts', adminMiddleware, upload.single('file'), async (req, res) => {
+router.post('/posts', adminMiddleware, (req, res, next) => {
+    upload.single('file')(req, res, (err) => {
+        if (err) {
+            console.error('Multer error:', err);
+            if (err.code === 'LIMIT_FILE_SIZE') {
+                return res.status(400).json({ error: 'FILE_TOO_LARGE' });
+            }
+            if (err.code === 'LIMIT_UNEXPECTED_FILE') {
+                return res.status(400).json({ error: 'UNEXPECTED_FILE_FIELD' });
+            }
+            return res.status(400).json({ error: 'FILE_UPLOAD_ERROR', details: err.message });
+        }
+        next();
+    });
+}, async (req, res) => {
     try {
         console.log('File upload request received:', {
             body: req.body,
