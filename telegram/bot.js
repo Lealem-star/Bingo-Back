@@ -728,11 +728,27 @@ function startTelegramBot({ BOT_TOKEN, WEBAPP_URL }) {
             }
         });
 
+        // Handle bot conflicts gracefully
         bot.telegram.deleteWebhook({ drop_pending_updates: true }).catch(() => { });
-        bot.telegram.getMe()
-            .then((me) => { console.log(`🤖 Starting Telegram bot @${me.username}`); return bot.launch(); })
-            .then(() => console.log('✅ Telegram bot started with long polling'))
-            .catch((err) => console.error('❌ Failed to start Telegram bot:', err));
+
+        // Add retry logic for bot conflicts
+        const startBot = async (retries = 3) => {
+            try {
+                const me = await bot.telegram.getMe();
+                console.log(`🤖 Starting Telegram bot @${me.username}`);
+                await bot.launch();
+                console.log('✅ Telegram bot started with long polling');
+            } catch (err) {
+                if (err.code === 409 && retries > 0) {
+                    console.log(`⚠️ Bot conflict detected, retrying in 5 seconds... (${retries} retries left)`);
+                    await new Promise(resolve => setTimeout(resolve, 5000));
+                    return startBot(retries - 1);
+                }
+                console.error('❌ Failed to start Telegram bot:', err);
+            }
+        };
+
+        startBot();
 
         process.once('SIGINT', () => bot.stop('SIGINT'));
         process.once('SIGTERM', () => bot.stop('SIGTERM'));
