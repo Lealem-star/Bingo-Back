@@ -36,6 +36,7 @@ router.get('/profile', authMiddleware, async (req, res) => {
                 lastName: userData.user.lastName,
                 phone: userData.user.phone,
                 isRegistered: userData.user.isRegistered,
+                role: userData.user.role || 'user', // Add role field
                 totalGamesPlayed: totalGames,
                 totalGamesWon: gamesWon,
                 registrationDate: userData.user.createdAt

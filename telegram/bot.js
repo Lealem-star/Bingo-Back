@@ -740,9 +740,13 @@ function startTelegramBot({ BOT_TOKEN, WEBAPP_URL }) {
                 console.log('✅ Telegram bot started with long polling');
             } catch (err) {
                 if (err.code === 409 && retries > 0) {
-                    console.log(`⚠️ Bot conflict detected, retrying in 5 seconds... (${retries} retries left)`);
-                    await new Promise(resolve => setTimeout(resolve, 5000));
+                    console.log(`⚠️ Bot conflict detected, retrying in 10 seconds... (${retries} retries left)`);
+                    await new Promise(resolve => setTimeout(resolve, 10000)); // Increased wait time
                     return startBot(retries - 1);
+                } else if (err.code === 409 && retries === 0) {
+                    console.log('⚠️ Bot conflict persists after all retries. Bot may already be running elsewhere.');
+                    console.log('⚠️ This is normal if you have multiple bot instances or the bot is already running.');
+                    return; // Don't throw error, just log and continue
                 }
                 console.error('❌ Failed to start Telegram bot:', err);
             }
