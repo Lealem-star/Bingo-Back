@@ -15,12 +15,12 @@ const storage = multer.diskStorage({
         try {
             const uploadDir = path.join(__dirname, '..', 'uploads');
             console.log('Upload directory:', uploadDir);
-            
+
             if (!fs.existsSync(uploadDir)) {
                 console.log('Creating upload directory:', uploadDir);
                 fs.mkdirSync(uploadDir, { recursive: true });
             }
-            
+
             // Check if directory is writable
             fs.access(uploadDir, fs.constants.W_OK, (err) => {
                 if (err) {
@@ -72,7 +72,7 @@ function adminMiddleware(req, res, next) {
             'x-session': req.headers['x-session'] ? 'Present' : 'Missing'
         }
     });
-    
+
     // For now, we'll use the same auth middleware
     // In production, you might want to add additional admin role checks
     return authMiddleware(req, res, (err) => {
@@ -80,7 +80,7 @@ function adminMiddleware(req, res, next) {
             console.error('Admin middleware auth error:', err);
             return res.status(401).json({ error: 'UNAUTHORIZED' });
         }
-        
+
         console.log('Admin middleware passed, userId:', req.userId);
         next();
     });
@@ -204,15 +204,15 @@ router.post('/posts', adminMiddleware, (req, res, next) => {
         });
 
         const { kind, caption, active } = req.body || {};
-        
+
         if (!kind) {
             console.log('Missing kind field');
             return res.status(400).json({ error: 'INVALID_INPUT' });
         }
-        
+
         let url = '';
         let filename = '';
-        
+
         if (req.file) {
             // File upload
             filename = req.file.filename;
@@ -222,23 +222,23 @@ router.post('/posts', adminMiddleware, (req, res, next) => {
             console.log('No file uploaded');
             return res.status(400).json({ error: 'NO_FILE_UPLOADED' });
         }
-        
+
         // Convert active string to boolean
         const isActive = active === 'true' || active === true;
-        
-        const post = await Post.create({ 
-            kind, 
-            url, 
+
+        const post = await Post.create({
+            kind,
+            url,
             filename,
-            caption: caption || '', 
+            caption: caption || '',
             active: isActive
         });
-        
+
         console.log('Post created successfully:', post);
         res.json({ success: true, post });
-    } catch (e) { 
+    } catch (e) {
         console.error('Post creation error:', e);
-        res.status(500).json({ error: 'INTERNAL_SERVER_ERROR' }); 
+        res.status(500).json({ error: 'INTERNAL_SERVER_ERROR' });
     }
 });
 
