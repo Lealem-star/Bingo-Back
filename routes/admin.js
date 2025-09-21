@@ -167,8 +167,6 @@ router.get('/withdrawals', adminMiddleware, async (req, res) => {
     }
 });
 
-module.exports = router;
-
 // --- Admin Posts ---
 router.get('/posts', adminMiddleware, async (req, res) => {
     try {
@@ -277,6 +275,71 @@ router.get('/balances/deposits', adminMiddleware, async (req, res) => {
     } catch { res.status(500).json({ error: 'INTERNAL_SERVER_ERROR' }); }
 });
 
+// --- Admin Balance Management ---
+router.post('/balances/deposits/:id/approve', adminMiddleware, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const transaction = await Transaction.findById(id);
+
+        if (!transaction) {
+            return res.status(404).json({ error: 'TRANSACTION_NOT_FOUND' });
+        }
+
+        if (transaction.type !== 'deposit' || transaction.status !== 'pending') {
+            return res.status(400).json({ error: 'INVALID_TRANSACTION_STATUS' });
+        }
+
+        // Add to user's main wallet
+        const WalletService = require('../services/walletService');
+        const result = await WalletService.processDepositApproval(transaction.userId, transaction.amount);
+
+        if (!result.success) {
+            return res.status(400).json({ error: result.error });
+        }
+
+        // Update transaction status
+        transaction.status = 'completed';
+        transaction.processedAt = new Date();
+        await transaction.save();
+
+        res.json({
+            success: true,
+            message: 'Deposit approved successfully'
+        });
+    } catch (error) {
+        console.error('Deposit approval error:', error);
+        res.status(500).json({ error: 'INTERNAL_SERVER_ERROR' });
+    }
+});
+
+router.post('/balances/deposits/:id/deny', adminMiddleware, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const transaction = await Transaction.findById(id);
+
+        if (!transaction) {
+            return res.status(404).json({ error: 'TRANSACTION_NOT_FOUND' });
+        }
+
+        if (transaction.type !== 'deposit' || transaction.status !== 'pending') {
+            return res.status(400).json({ error: 'INVALID_TRANSACTION_STATUS' });
+        }
+
+        // Update transaction status
+        transaction.status = 'cancelled';
+        transaction.processedAt = new Date();
+        await transaction.save();
+
+        res.json({
+            success: true,
+            message: 'Deposit denied successfully'
+        });
+    } catch (error) {
+        console.error('Deposit denial error:', error);
+        res.status(500).json({ error: 'INTERNAL_SERVER_ERROR' });
+    }
+});
+
 // --- Admin Statistics ---
 router.get('/stats/today', adminMiddleware, async (req, res) => {
     try {
@@ -303,3 +366,74 @@ router.get('/stats/revenue/by-day', adminMiddleware, async (req, res) => {
         res.json({ revenueByDay: list });
     } catch { res.status(500).json({ error: 'INTERNAL_SERVER_ERROR' }); }
 });
+
+// --- Additional Admin Endpoints ---
+router.get('/stats/games', adminMiddleware, async (req, res) => {
+    try {
+        const { days = 7 } = req.query;
+        const since = new Date();
+        since.setDate(since.getDate() - Number(days));
+        since.setHours(0, 0, 0, 0);
+
+        const games = await Game.find({
+            finishedAt: { $gte: since },
+            status: 'finished'
+        }).sort({ finishedAt: -1 }).lean();
+
+        const gameStats = games.map(game => ({
+            gameId: game.gameId,
+            stake: game.stake,
+            playersCount: game.players ? game.players.length : 0,
+            systemCut: game.systemCut || 0,
+            totalPrizes: game.totalPrizes || 0,
+            finishedAt: game.finishedAt,
+            winnersCount: game.winners ? game.winners.length : 0
+        }));
+
+        res.json({ games: gameStats });
+    } catch (error) {
+        console.error('Games stats error:', error);
+        res.status(500).json({ error: 'INTERNAL_SERVER_ERROR' });
+    }
+});
+
+router.get('/stats/overview', adminMiddleware, async (req, res) => {
+    try {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const tomorrow = new Date(today);
+        tomorrow.setDate(tomorrow.getDate() + 1);
+
+        // Today's stats
+        const todayGames = await Game.find({
+            finishedAt: { $gte: today, $lt: tomorrow },
+            status: 'finished'
+        }).lean();
+
+        const todayStats = {
+            totalGames: todayGames.length,
+            totalPlayers: todayGames.reduce((sum, game) => sum + (game.players ? game.players.length : 0), 0),
+            totalRevenue: todayGames.reduce((sum, game) => sum + (game.systemCut || 0), 0),
+            totalPrizes: todayGames.reduce((sum, game) => sum + (game.totalPrizes || 0), 0)
+        };
+
+        // All time stats
+        const allTimeGames = await Game.find({ status: 'finished' }).lean();
+        const allTimeStats = {
+            totalGames: allTimeGames.length,
+            totalPlayers: allTimeGames.reduce((sum, game) => sum + (game.players ? game.players.length : 0), 0),
+            totalRevenue: allTimeGames.reduce((sum, game) => sum + (game.systemCut || 0), 0),
+            totalPrizes: allTimeGames.reduce((sum, game) => sum + (game.totalPrizes || 0), 0)
+        };
+
+        res.json({
+            today: todayStats,
+            allTime: allTimeStats
+        });
+    } catch (error) {
+        console.error('Overview stats error:', error);
+        res.status(500).json({ error: 'INTERNAL_SERVER_ERROR' });
+    }
+});
+
+module.exports = router;

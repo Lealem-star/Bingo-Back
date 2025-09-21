@@ -168,7 +168,7 @@ class WalletService {
     // Process game bet
     static async processGameBet(userId, amount, gameId) {
         try {
-            const result = await this.updateBalance(userId, { balance: -amount });
+            const result = await this.updateBalance(userId, { play: -amount });
 
             // Create transaction record
             const transaction = new Transaction({
@@ -193,7 +193,7 @@ class WalletService {
     static async processGameWin(userId, amount, gameId) {
         try {
             const result = await this.updateBalance(userId, {
-                balance: amount,
+                play: amount,
                 gamesWon: 1
             });
 
@@ -243,7 +243,7 @@ class WalletService {
         try {
             const wallet = await this.getWallet(userId);
 
-            if (wallet.balance < amount) {
+            if (wallet.main < amount) {
                 return { success: false, error: 'INSUFFICIENT_FUNDS' };
             }
 
@@ -274,17 +274,38 @@ class WalletService {
         try {
             const wallet = await this.getWallet(userId);
 
-            if (wallet.balance < amount) {
+            if (wallet.main < amount) {
                 return { success: false, error: 'INSUFFICIENT_FUNDS' };
             }
 
-            // Deduct from balance
-            wallet.balance -= amount;
+            // Deduct from main wallet
+            wallet.main -= amount;
             await wallet.save();
 
             return { success: true };
         } catch (error) {
             console.error('Error processing withdrawal approval:', error);
+            return { success: false, error: 'INTERNAL_ERROR' };
+        }
+    }
+
+    // Process deposit approval (admin)
+    static async processDepositApproval(userId, amount) {
+        try {
+            const wallet = await this.getWallet(userId);
+
+            // Add to main wallet
+            const result = await this.updateBalance(userId, { main: amount });
+
+            // Gift coins: 10% of deposit amount
+            const giftCoins = Math.floor(amount * 0.1);
+            if (giftCoins > 0) {
+                await this.updateBalance(userId, { coins: giftCoins });
+            }
+
+            return { success: true, wallet: result.wallet };
+        } catch (error) {
+            console.error('Error processing deposit approval:', error);
             return { success: false, error: 'INTERNAL_ERROR' };
         }
     }
