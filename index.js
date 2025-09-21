@@ -82,22 +82,6 @@ function makeRoom(stake) {
         registrationEndTime: null,
         gameEndTime: null,
         onJoin: async (ws) => {
-            if (room.phase === 'registration') {
-                try {
-                    // Process game bet - deduct from play balance
-                    const result = await WalletService.processGameBet(ws.userId, stake);
-                    if (!result.success) {
-                        ws.send(JSON.stringify({ type: 'error', message: result.error }));
-                        return;
-                    }
-                    room.selectedPlayers.add(ws.userId);
-                    broadcast('players_update', { playersCount: room.selectedPlayers.size });
-                } catch (error) {
-                    console.error('Game bet error:', error);
-                    ws.send(JSON.stringify({ type: 'error', message: 'Failed to process bet' }));
-                    return;
-                }
-            }
             room.players.set(ws.userId, { ws, cartella: null, name: 'Player' });
             ws.room = room;
             broadcast('snapshot', {
@@ -147,6 +131,7 @@ function startRegistration(room) {
         stake: room.stake,
         playersCount: room.selectedPlayers.size,
         duration: 30000,
+        availableCards: Array.from({ length: 100 }, (_, i) => i + 1), // Generate 1-100 available cards
         takenCards: []
     });
 
@@ -180,15 +165,22 @@ function startGame(room) {
         }
     });
 
-    broadcast('game_started', {
-        gameId: room.currentGameId,
-        stake: room.stake,
-        playersCount: room.selectedPlayers.size,
-        cartellas: Array.from(room.cartellas.entries()).map(([userId, cartella]) => ({
-            userId,
-            cartella
-        })),
-        selections: Array.from(room.userCardSelections.entries()).map(([userId, cardNumber]) => ({ userId, cardNumber }))
+    // Send individual game_started messages to each player with their specific card
+    room.selectedPlayers.forEach(userId => {
+        const player = room.players.get(userId);
+        if (player && player.ws) {
+            const card = room.cartellas.get(userId);
+            player.ws.send(JSON.stringify({
+                type: 'game_started',
+                payload: {
+                    gameId: room.currentGameId,
+                    stake: room.stake,
+                    playersCount: room.selectedPlayers.size,
+                    calledNumbers: room.calledNumbers,
+                    card: card
+                }
+            }));
+        }
     });
 
     // Start calling numbers
@@ -355,7 +347,7 @@ wss.on('connection', async (ws, request) => {
         await room.onJoin(ws);
     }
 
-    ws.on('message', (message) => {
+    ws.on('message', async (message) => {
         try {
             const data = JSON.parse(message);
             if (data.type === 'join_room') {
@@ -378,6 +370,22 @@ wss.on('connection', async (ws, request) => {
                         ws.send(JSON.stringify({ type: 'selection_rejected', payload: { reason: 'TAKEN', cardNumber } }));
                         return;
                     }
+
+                    // Process game bet when player selects a cartella
+                    try {
+                        const result = await WalletService.processGameBet(ws.userId, room.stake);
+                        if (!result.success) {
+                            ws.send(JSON.stringify({ type: 'error', message: result.error }));
+                            return;
+                        }
+                        // Add player to selectedPlayers when they successfully bet
+                        room.selectedPlayers.add(ws.userId);
+                    } catch (error) {
+                        console.error('Game bet error during card selection:', error);
+                        ws.send(JSON.stringify({ type: 'error', message: 'Failed to process bet' }));
+                        return;
+                    }
+
                     room.userCardSelections.set(ws.userId, cardNumber);
                     room.takenCards.add(cardNumber);
                     ws.send(JSON.stringify({ type: 'selection_confirmed', payload: { cardNumber, playersCount: room.selectedPlayers.size } }));
