@@ -15,9 +15,11 @@ router.get('/', authMiddleware, async (req, res) => {
         const wallet = await WalletService.getWallet(user._id);
         if (!wallet) return res.status(404).json({ error: 'WALLET_NOT_FOUND' });
 
-        // Unified wallet response
+        // Unified wallet response with main/play structure
         res.json({
             balance: wallet.balance,
+            main: wallet.main || 0,
+            play: wallet.play || 0,
             coins: wallet.coins,
             gamesWon: wallet.gamesWon
         });
@@ -30,7 +32,7 @@ router.get('/', authMiddleware, async (req, res) => {
 // POST /wallet/convert
 router.post('/convert', authMiddleware, async (req, res) => {
     try {
-        const { coins } = req.body;
+        const { coins, targetWallet } = req.body;
         const telegramId = String(req.userId);
         if (!coins || isNaN(coins) || Number(coins) <= 0) {
             return res.status(400).json({ error: 'INVALID_AMOUNT' });
@@ -38,11 +40,40 @@ router.post('/convert', authMiddleware, async (req, res) => {
         const user = await UserService.getUserByTelegramId(telegramId);
         if (!user) return res.status(404).json({ error: 'USER_NOT_FOUND' });
 
-        const result = await WalletService.convertCoins(user._id, Number(coins));
+        const result = await WalletService.convertCoins(user._id, Number(coins), targetWallet || 'main');
         return res.json({ wallet: result.wallet });
     } catch (error) {
         console.error('Convert error:', error);
         res.status(500).json({ error: 'INTERNAL_SERVER_ERROR' });
+    }
+});
+
+// POST /wallet/transfer
+router.post('/transfer', authMiddleware, async (req, res) => {
+    try {
+        const { amount, direction } = req.body;
+        const telegramId = String(req.userId);
+
+        if (!amount || isNaN(amount) || Number(amount) <= 0) {
+            return res.status(400).json({ error: 'INVALID_AMOUNT' });
+        }
+
+        if (!direction || !['main-to-play', 'play-to-main'].includes(direction)) {
+            return res.status(400).json({ error: 'INVALID_DIRECTION' });
+        }
+
+        const user = await UserService.getUserByTelegramId(telegramId);
+        if (!user) return res.status(404).json({ error: 'USER_NOT_FOUND' });
+
+        const result = await WalletService.transferFunds(user._id, Number(amount), direction);
+        return res.json({ wallet: result.wallet });
+    } catch (error) {
+        console.error('Transfer error:', error);
+        if (error.message === 'Insufficient funds') {
+            res.status(400).json({ error: 'INSUFFICIENT_FUNDS' });
+        } else {
+            res.status(500).json({ error: 'INTERNAL_SERVER_ERROR' });
+        }
     }
 });
 

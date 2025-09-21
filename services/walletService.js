@@ -23,6 +23,8 @@ class WalletService {
             const wallet = new Wallet({
                 userId,
                 balance: 0,
+                main: 0,
+                play: 0,
                 coins: 0,
                 gamesWon: 0
             });
@@ -44,11 +46,15 @@ class WalletService {
 
             const balanceBefore = {
                 balance: wallet.balance,
+                main: wallet.main,
+                play: wallet.play,
                 coins: wallet.coins
             };
 
             // Update balances
             if (updates.balance !== undefined) wallet.balance = Math.max(0, wallet.balance + updates.balance);
+            if (updates.main !== undefined) wallet.main = Math.max(0, wallet.main + updates.main);
+            if (updates.play !== undefined) wallet.play = Math.max(0, wallet.play + updates.play);
             if (updates.coins !== undefined) wallet.coins = Math.max(0, wallet.coins + updates.coins);
             if (updates.gamesWon !== undefined) wallet.gamesWon += updates.gamesWon;
 
@@ -59,6 +65,8 @@ class WalletService {
                 balanceBefore,
                 balanceAfter: {
                     balance: wallet.balance,
+                    main: wallet.main,
+                    play: wallet.play,
                     coins: wallet.coins
                 }
             };
@@ -110,7 +118,7 @@ class WalletService {
     }
 
     // Convert coins to fiat balance at 100 coins = 1 birr
-    static async convertCoins(userId, coins) {
+    static async convertCoins(userId, coins, targetWallet = 'main') {
         try {
             const wallet = await Wallet.findOne({ userId });
             if (!wallet) {
@@ -128,17 +136,23 @@ class WalletService {
             }
 
             const coinsToDeduct = birrAmount * 100;
-            const result = await this.updateBalance(userId, {
-                coins: -coinsToDeduct,
-                balance: birrAmount
-            });
+
+            // Determine which wallet to add the converted amount to
+            const updates = { coins: -coinsToDeduct };
+            if (targetWallet === 'play') {
+                updates.play = birrAmount;
+            } else {
+                updates.main = birrAmount;
+            }
+
+            const result = await this.updateBalance(userId, updates);
 
             // Create transaction record
             const transaction = new Transaction({
                 userId,
                 type: 'coin_conversion',
                 amount: birrAmount,
-                description: `Converted ${coinsToDeduct} coins to ETB ${birrAmount}`,
+                description: `Converted ${coinsToDeduct} coins to ETB ${birrAmount} (added to ${targetWallet} wallet)`,
                 balanceBefore: result.balanceBefore,
                 balanceAfter: result.balanceAfter
             });
@@ -272,6 +286,67 @@ class WalletService {
         } catch (error) {
             console.error('Error processing withdrawal approval:', error);
             return { success: false, error: 'INTERNAL_ERROR' };
+        }
+    }
+
+    // Transfer funds between main and play wallets
+    static async transferFunds(userId, amount, direction) {
+        try {
+            const wallet = await Wallet.findOne({ userId });
+            if (!wallet) {
+                throw new Error('Wallet not found');
+            }
+
+            const balanceBefore = {
+                main: wallet.main,
+                play: wallet.play,
+                coins: wallet.coins
+            };
+
+            let sourceWallet, targetWallet, sourceField, targetField;
+
+            if (direction === 'main-to-play') {
+                sourceWallet = wallet.main;
+                targetWallet = wallet.play;
+                sourceField = 'main';
+                targetField = 'play';
+            } else if (direction === 'play-to-main') {
+                sourceWallet = wallet.play;
+                targetWallet = wallet.main;
+                sourceField = 'play';
+                targetField = 'main';
+            } else {
+                throw new Error('Invalid transfer direction');
+            }
+
+            if (sourceWallet < amount) {
+                throw new Error('Insufficient funds');
+            }
+
+            // Perform transfer
+            wallet[sourceField] -= amount;
+            wallet[targetField] += amount;
+            await wallet.save();
+
+            // Create transaction record
+            const transaction = new Transaction({
+                userId,
+                type: 'wallet_transfer',
+                amount: amount,
+                description: `Transfer ${amount} from ${sourceField} to ${targetField} wallet`,
+                balanceBefore: balanceBefore,
+                balanceAfter: {
+                    main: wallet.main,
+                    play: wallet.play,
+                    coins: wallet.coins
+                }
+            });
+            await transaction.save();
+
+            return { wallet, transaction };
+        } catch (error) {
+            console.error('Error transferring funds:', error);
+            throw error;
         }
     }
 }
