@@ -91,7 +91,7 @@ function makeRoom(stake) {
                 stake: room.stake,
                 takenCards: Array.from(room.takenCards),
                 yourSelection: room.userCardSelections.get(ws.userId) || null
-            });
+            }, room);
         },
         onLeave: (ws) => {
             room.players.delete(ws.userId);
@@ -102,22 +102,32 @@ function makeRoom(stake) {
                 room.takenCards.delete(prev);
                 room.userCardSelections.delete(ws.userId);
             }
-            broadcast('players_update', { playersCount: room.selectedPlayers.size });
-            broadcast('registration_update', { takenCards: Array.from(room.takenCards) });
+            broadcast('players_update', { playersCount: room.selectedPlayers.size }, room);
+            broadcast('registration_update', { takenCards: Array.from(room.takenCards) }, room);
         }
     };
     return room;
 }
 
-function broadcast(type, payload) {
+function broadcast(type, payload, targetRoom = null) {
     const message = JSON.stringify({ type, payload });
-    rooms.forEach(room => {
-        room.players.forEach(({ ws }) => {
+    if (targetRoom) {
+        // Broadcast to specific room
+        targetRoom.players.forEach(({ ws }) => {
             if (ws.readyState === ws.OPEN) {
                 ws.send(message);
             }
         });
-    });
+    } else {
+        // Broadcast to all rooms (fallback)
+        rooms.forEach(room => {
+            room.players.forEach(({ ws }) => {
+                if (ws.readyState === ws.OPEN) {
+                    ws.send(message);
+                }
+            });
+        });
+    }
 }
 
 function startRegistration(room) {
@@ -133,7 +143,7 @@ function startRegistration(room) {
         duration: 30000,
         availableCards: Array.from({ length: 100 }, (_, i) => i + 1), // Generate 1-100 available cards
         takenCards: []
-    });
+    }, room);
 
     setTimeout(() => {
         if (room.phase === 'registration') {
@@ -145,7 +155,7 @@ function startRegistration(room) {
 function startGame(room) {
     if (room.selectedPlayers.size === 0) {
         room.phase = 'waiting';
-        broadcast('game_cancelled', { reason: 'No players' });
+        broadcast('game_cancelled', { reason: 'No players' }, room);
         return;
     }
 
@@ -199,7 +209,7 @@ function callNextNumber(room) {
     } while (room.calledNumbers.includes(number));
 
     room.calledNumbers.push(number);
-    broadcast('number_called', { gameId: room.currentGameId, number, calledNumbers: room.calledNumbers, value: number, called: room.calledNumbers });
+    broadcast('number_called', { gameId: room.currentGameId, number, calledNumbers: room.calledNumbers, value: number, called: room.calledNumbers }, room);
 
     // Check for winners
     checkWinners(room);
@@ -229,7 +239,7 @@ function toAnnounce(room) {
         winners: room.winners,
         calledNumbers: room.calledNumbers,
         stake: room.stake
-    });
+    }, room);
 
     // Process winnings
     if (room.winners.length > 0) {
@@ -273,7 +283,7 @@ function toAnnounce(room) {
         room.startTime = null;
         room.registrationEndTime = null;
         room.gameEndTime = null;
-        broadcast('snapshot', { phase: 'waiting', playersCount: 0, calledNumbers: [], stake: room.stake, gameId: null, called: [] });
+        broadcast('snapshot', { phase: 'waiting', playersCount: 0, calledNumbers: [], stake: room.stake, gameId: null, called: [] }, room);
         // Chain next round automatically
         startRegistration(room);
     }, 10000);
@@ -390,8 +400,8 @@ wss.on('connection', async (ws, request) => {
                     room.takenCards.add(cardNumber);
                     ws.send(JSON.stringify({ type: 'selection_confirmed', payload: { cardNumber, playersCount: room.selectedPlayers.size } }));
                     // Immediately inform all clients about players count to update UI top bar
-                    broadcast('players_update', { playersCount: room.selectedPlayers.size });
-                    broadcast('registration_update', { takenCards: Array.from(room.takenCards) });
+                    broadcast('players_update', { playersCount: room.selectedPlayers.size }, room);
+                    broadcast('registration_update', { takenCards: Array.from(room.takenCards) }, room);
                 }
             } else if (data.type === 'claim_bingo') {
                 const room = ws.room;
