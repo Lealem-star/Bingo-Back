@@ -370,11 +370,11 @@ wss.on('connection', async (ws, request) => {
             } else if (data.type === 'select_card') {
                 const room = ws.room;
                 const cardNumber = Number(data.cardNumber || data.payload?.cardNumber);
-                // If waiting, start registration on first selection attempt
-                if (room && room.phase === 'waiting') {
-                    startRegistration(room);
-                }
-                if (room && room.phase === 'registration' && Number.isInteger(cardNumber) && cardNumber >= 1 && cardNumber <= 100) {
+                if (room && Number.isInteger(cardNumber) && cardNumber >= 1 && cardNumber <= 100) {
+                    // If waiting, open registration immediately and continue to process the selection
+                    if (room.phase === 'waiting') {
+                        startRegistration(room);
+                    }
                     const previous = room.userCardSelections.get(ws.userId);
                     if (previous) {
                         room.takenCards.delete(previous);
