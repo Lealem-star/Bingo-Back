@@ -156,6 +156,13 @@ function startGame(room) {
     if (room.selectedPlayers.size === 0) {
         room.phase = 'waiting';
         broadcast('game_cancelled', { reason: 'No players' }, room);
+        // Auto-retry registration after short delay to avoid being stuck in waiting
+        setTimeout(() => {
+            // Only restart if nothing else has changed the phase meanwhile
+            if (room.phase === 'waiting') {
+                startRegistration(room);
+            }
+        }, 1000);
         return;
     }
 
