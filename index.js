@@ -156,13 +156,7 @@ function startGame(room) {
     if (room.selectedPlayers.size === 0) {
         room.phase = 'waiting';
         broadcast('game_cancelled', { reason: 'No players' }, room);
-        // Auto-retry registration after short delay to avoid being stuck in waiting
-        setTimeout(() => {
-            // Only restart if nothing else has changed the phase meanwhile
-            if (room.phase === 'waiting') {
-                startRegistration(room);
-            }
-        }, 1000);
+        // Do not auto-restart registration; wait for a player to trigger it
         return;
     }
 
@@ -291,8 +285,7 @@ function toAnnounce(room) {
         room.registrationEndTime = null;
         room.gameEndTime = null;
         broadcast('snapshot', { phase: 'waiting', playersCount: 0, calledNumbers: [], stake: room.stake, gameId: null, called: [] }, room);
-        // Chain next round automatically
-        startRegistration(room);
+        // Next registration will be triggered by first player selection
     }, 10000);
 }
 
@@ -377,6 +370,10 @@ wss.on('connection', async (ws, request) => {
             } else if (data.type === 'select_card') {
                 const room = ws.room;
                 const cardNumber = Number(data.cardNumber || data.payload?.cardNumber);
+                // If waiting, start registration on first selection attempt
+                if (room && room.phase === 'waiting') {
+                    startRegistration(room);
+                }
                 if (room && room.phase === 'registration' && Number.isInteger(cardNumber) && cardNumber >= 1 && cardNumber <= 100) {
                     const previous = room.userCardSelections.get(ws.userId);
                     if (previous) {
@@ -410,6 +407,10 @@ wss.on('connection', async (ws, request) => {
                     broadcast('players_update', { playersCount: room.selectedPlayers.size }, room);
                     broadcast('registration_update', { takenCards: Array.from(room.takenCards) }, room);
                 }
+            } else if (data.type === 'start_registration') {
+                // Optional: reply with snapshot; selection itself now triggers registration
+                const room = ws.room;
+                try { ws.send(JSON.stringify({ type: 'snapshot', payload: { phase: room?.phase || 'unknown', playersCount: room?.selectedPlayers?.size || 0, calledNumbers: room?.calledNumbers || [], stake: room?.stake, takenCards: Array.from(room?.takenCards || []), yourSelection: room?.userCardSelections?.get(ws.userId) || null } })); } catch { }
             } else if (data.type === 'claim_bingo') {
                 const room = ws.room;
                 if (room && room.phase === 'running') {
@@ -449,36 +450,14 @@ server.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
     console.log(`🌐 WebSocket available at ws://localhost:${PORT}/ws`);
 
-    // Keep-alive mechanism to prevent Render from sleeping
-    setInterval(() => {
-        const http = require('http');
-        const options = {
-            hostname: 'localhost',
-            port: PORT,
-            path: '/health',
-            method: 'GET'
-        };
-
-        const req = http.request(options, (res) => {
-            console.log('💓 Health check ping - service alive');
-        });
-
-        req.on('error', (err) => {
-            console.error('💔 Health check failed:', err.message);
-        });
-
-        req.end();
-    }, 300000); // Ping every 5 minutes
-
-    // Initialize rooms and start first registration for each stake at server startup
+    // Initialize rooms without auto-starting registration; wait for first selection
     stakes.forEach((stake) => {
         if (!rooms.has(stake)) {
             rooms.set(stake, makeRoom(stake));
         }
         const room = rooms.get(stake);
-        if (room.phase === 'waiting') {
-            startRegistration(room);
-        }
+        room.phase = 'waiting';
+        broadcast('snapshot', { phase: 'waiting', playersCount: 0, calledNumbers: [], stake: room.stake, gameId: null, called: [] }, room);
     });
 });
 
