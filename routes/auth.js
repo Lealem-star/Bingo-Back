@@ -87,14 +87,15 @@ router.post('/telegram/verify', async (req, res) => {
             return res.status(500).json({ error: 'USER_CREATION_FAILED' });
         }
 
-        // Issue JWT
-        const token = jwt.sign({ sub: user.telegramId || userId, iat: Math.floor(Date.now() / 1000) }, JWT_SECRET, { expiresIn: '7d' });
+        // Issue JWT - use user._id as sub for consistency
+        const token = jwt.sign({ sub: user._id.toString(), iat: Math.floor(Date.now() / 1000) }, JWT_SECRET, { expiresIn: '7d' });
 
         res.json({
             token,
             sessionId: token,
             user: {
-                id: user.telegramId || userId,
+                id: user._id.toString(),
+                telegramId: user.telegramId || userId,
                 name: user.firstName,
                 phone: user.phone,
                 firstName: user.firstName,
