@@ -86,11 +86,14 @@ function makeRoom(stake) {
             ws.room = room;
             broadcast('snapshot', {
                 phase: room.phase,
+                gameId: room.currentGameId,
                 playersCount: room.selectedPlayers.size,
                 calledNumbers: room.calledNumbers,
+                called: room.calledNumbers,
                 stake: room.stake,
                 takenCards: Array.from(room.takenCards),
-                yourSelection: room.userCardSelections.get(ws.userId) || null
+                yourSelection: room.userCardSelections.get(ws.userId) || null,
+                nextStartAt: room.registrationEndTime || room.gameEndTime || null
             }, room);
         },
         onLeave: (ws) => {
@@ -137,16 +140,20 @@ function startRegistration(room) {
     room.takenCards.clear();
     room.userCardSelections.clear();
     room.currentGameId = null;
+    room.currentGameId = `LB${Date.now()}`;
     broadcast('registration_open', {
+        gameId: room.currentGameId,
         stake: room.stake,
         playersCount: room.selectedPlayers.size,
         duration: 30000,
+        endsAt: room.registrationEndTime,
         availableCards: Array.from({ length: 100 }, (_, i) => i + 1), // Generate 1-100 available cards
         takenCards: []
     }, room);
 
     setTimeout(() => {
         if (room.phase === 'registration') {
+            broadcast('registration_closed', { gameId: room.currentGameId }, room);
             startGame(room);
         }
     }, 30000);
@@ -164,8 +171,6 @@ function startGame(room) {
     room.calledNumbers = [];
     room.winners = [];
     room.gameEndTime = Date.now() + 300000; // 5 minutes max
-    room.currentGameId = `LB${Date.now()}`;
-
     // Generate cartellas for all players
     room.selectedPlayers.forEach(userId => {
         const cartella = generateCartella();
@@ -188,6 +193,7 @@ function startGame(room) {
                     stake: room.stake,
                     playersCount: room.selectedPlayers.size,
                     calledNumbers: room.calledNumbers,
+                    called: room.calledNumbers,
                     card: card
                 }
             }));
@@ -235,11 +241,13 @@ function checkWinners(room) {
 
 function toAnnounce(room) {
     room.phase = 'announce';
-    broadcast('game_ended', {
+    broadcast('game_finished', {
         gameId: room.currentGameId,
         winners: room.winners,
         calledNumbers: room.calledNumbers,
-        stake: room.stake
+        called: room.calledNumbers,
+        stake: room.stake,
+        nextStartAt: Date.now() + 10000
     }, room);
 
     // Process winnings
@@ -284,7 +292,7 @@ function toAnnounce(room) {
         room.startTime = null;
         room.registrationEndTime = null;
         room.gameEndTime = null;
-        broadcast('snapshot', { phase: 'waiting', playersCount: 0, calledNumbers: [], stake: room.stake, gameId: null, called: [] }, room);
+        broadcast('snapshot', { phase: 'waiting', playersCount: 0, calledNumbers: [], called: [], stake: room.stake, gameId: null, nextStartAt: null }, room);
         // Next registration will be triggered by first player selection
     }, 10000);
 }
@@ -410,13 +418,20 @@ wss.on('connection', async (ws, request) => {
             } else if (data.type === 'start_registration') {
                 // Optional: reply with snapshot; selection itself now triggers registration
                 const room = ws.room;
-                try { ws.send(JSON.stringify({ type: 'snapshot', payload: { phase: room?.phase || 'unknown', playersCount: room?.selectedPlayers?.size || 0, calledNumbers: room?.calledNumbers || [], stake: room?.stake, takenCards: Array.from(room?.takenCards || []), yourSelection: room?.userCardSelections?.get(ws.userId) || null } })); } catch { }
-            } else if (data.type === 'claim_bingo') {
+                try { ws.send(JSON.stringify({ type: 'snapshot', payload: { phase: room?.phase || 'unknown', gameId: room?.currentGameId || null, playersCount: room?.selectedPlayers?.size || 0, calledNumbers: room?.calledNumbers || [], called: room?.calledNumbers || [], stake: room?.stake, takenCards: Array.from(room?.takenCards || []), yourSelection: room?.userCardSelections?.get(ws.userId) || null, nextStartAt: room?.registrationEndTime || room?.gameEndTime || null } })); } catch { }
+            } else if (data.type === 'bingo_claim' || data.type === 'claim_bingo') {
                 const room = ws.room;
                 if (room && room.phase === 'running') {
                     const cartella = room.cartellas.get(ws.userId);
                     if (cartella && checkBingo(cartella, room.calledNumbers)) {
                         room.winners.push({ userId: ws.userId, cartella });
+                        // Send bingo_accepted event to all players
+                        broadcast('bingo_accepted', {
+                            gameId: room.currentGameId,
+                            winners: room.winners,
+                            calledNumbers: room.calledNumbers,
+                            called: room.calledNumbers
+                        }, room);
                         toAnnounce(room);
                     }
                 }
@@ -457,7 +472,7 @@ server.listen(PORT, () => {
         }
         const room = rooms.get(stake);
         room.phase = 'waiting';
-        broadcast('snapshot', { phase: 'waiting', playersCount: 0, calledNumbers: [], stake: room.stake, gameId: null, called: [] }, room);
+        broadcast('snapshot', { phase: 'waiting', playersCount: 0, calledNumbers: [], called: [], stake: room.stake, gameId: null, nextStartAt: null }, room);
     });
 });
 
