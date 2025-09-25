@@ -133,33 +133,52 @@ function broadcast(type, payload, targetRoom = null) {
     }
 }
 
-function startRegistration(room) {
+async function startRegistration(room) {
     room.phase = 'registration';
     room.registrationEndTime = Date.now() + 30000; // 30 seconds
     room.startTime = Date.now();
     room.takenCards.clear();
     room.userCardSelections.clear();
-    room.currentGameId = null;
+    room.selectedPlayers.clear(); // Clear previous selections
     room.currentGameId = `LB${Date.now()}`;
+
+    // Create game record in database when registration starts
+    try {
+        const game = new Game({
+            gameId: room.currentGameId,
+            stake: room.stake,
+            players: [],
+            status: 'registration',
+            registrationEndsAt: new Date(room.registrationEndTime),
+            pot: 0,
+            systemCut: 0,
+            prizePool: 0
+        });
+        await game.save();
+        console.log(`Game ${room.currentGameId} created for stake ${room.stake}`);
+    } catch (error) {
+        console.error('Error creating game record:', error);
+    }
+
     broadcast('registration_open', {
         gameId: room.currentGameId,
         stake: room.stake,
-        playersCount: room.selectedPlayers.size,
+        playersCount: 0, // Start with 0, will update as players join
         duration: 30000,
         endsAt: room.registrationEndTime,
         availableCards: Array.from({ length: 100 }, (_, i) => i + 1), // Generate 1-100 available cards
         takenCards: []
     }, room);
 
-    setTimeout(() => {
+    setTimeout(async () => {
         if (room.phase === 'registration') {
             broadcast('registration_closed', { gameId: room.currentGameId }, room);
-            startGame(room);
+            await startGame(room);
         }
     }, 30000);
 }
 
-function startGame(room) {
+async function startGame(room) {
     if (room.selectedPlayers.size === 0) {
         room.phase = 'waiting';
         broadcast('game_cancelled', { reason: 'No players' }, room);
@@ -167,10 +186,58 @@ function startGame(room) {
         return;
     }
 
+    // Deduct stake from all selected players' wallets
+    const pot = room.selectedPlayers.size * room.stake;
+    const systemCut = Math.floor(pot * 0.2);
+    const prizePool = pot - systemCut;
+    const prizePerWinner = room.selectedPlayers.size > 0 ? Math.floor(prizePool / room.selectedPlayers.size) : 0;
+
+    console.log(`Starting game ${room.currentGameId}: ${room.selectedPlayers.size} players, pot: ${pot}, prize pool: ${prizePool}`);
+
+    // Process wallet deductions for all selected players
+    const players = [];
+    for (const userId of room.selectedPlayers) {
+        try {
+            const result = await WalletService.processGameBet(userId, room.stake, room.currentGameId);
+            if (result.success) {
+                players.push({
+                    userId,
+                    cartelaNumber: room.userCardSelections.get(userId),
+                    joinedAt: new Date()
+                });
+            } else {
+                console.error(`Failed to deduct stake for user ${userId}:`, result.error);
+                // Remove player who couldn't pay
+                room.selectedPlayers.delete(userId);
+            }
+        } catch (error) {
+            console.error(`Error processing bet for user ${userId}:`, error);
+            room.selectedPlayers.delete(userId);
+        }
+    }
+
+    // Update game record with final player data
+    try {
+        await Game.findOneAndUpdate(
+            { gameId: room.currentGameId },
+            {
+                players: players,
+                pot: pot,
+                systemCut: systemCut,
+                prizePool: prizePool,
+                status: 'running',
+                startedAt: new Date()
+            }
+        );
+    } catch (error) {
+        console.error('Error updating game record:', error);
+    }
+
     room.phase = 'running';
     room.calledNumbers = [];
     room.winners = [];
     room.gameEndTime = Date.now() + 300000; // 5 minutes max
+
     // Generate cartellas for all players
     room.selectedPlayers.forEach(userId => {
         const cartella = generateCartella();
@@ -192,6 +259,8 @@ function startGame(room) {
                     gameId: room.currentGameId,
                     stake: room.stake,
                     playersCount: room.selectedPlayers.size,
+                    pot: pot,
+                    prizePool: prizePool,
                     calledNumbers: room.calledNumbers,
                     called: room.calledNumbers,
                     card: card
@@ -381,39 +450,53 @@ wss.on('connection', async (ws, request) => {
                 if (room && Number.isInteger(cardNumber) && cardNumber >= 1 && cardNumber <= 100) {
                     // If waiting, open registration immediately and continue to process the selection
                     if (room.phase === 'waiting') {
-                        startRegistration(room);
+                        await startRegistration(room);
                     }
+
+                    // Only process if we're in registration phase
+                    if (room.phase !== 'registration') {
+                        ws.send(JSON.stringify({ type: 'selection_rejected', payload: { reason: 'NOT_IN_REGISTRATION', cardNumber } }));
+                        return;
+                    }
+
                     const previous = room.userCardSelections.get(ws.userId);
                     if (previous) {
                         room.takenCards.delete(previous);
+                        room.selectedPlayers.delete(ws.userId);
                     }
+
                     if (room.takenCards.has(cardNumber)) {
                         // Already taken, notify user
                         ws.send(JSON.stringify({ type: 'selection_rejected', payload: { reason: 'TAKEN', cardNumber } }));
                         return;
                     }
 
-                    // Process game bet when player selects a cartella
-                    try {
-                        const result = await WalletService.processGameBet(ws.userId, room.stake);
-                        if (!result.success) {
-                            ws.send(JSON.stringify({ type: 'error', message: result.error }));
-                            return;
-                        }
-                        // Add player to selectedPlayers when they successfully bet
-                        room.selectedPlayers.add(ws.userId);
-                    } catch (error) {
-                        console.error('Game bet error during card selection:', error);
-                        ws.send(JSON.stringify({ type: 'error', message: 'Failed to process bet' }));
-                        return;
-                    }
-
+                    // Just reserve the spot - no wallet deduction yet
                     room.userCardSelections.set(ws.userId, cardNumber);
                     room.takenCards.add(cardNumber);
-                    ws.send(JSON.stringify({ type: 'selection_confirmed', payload: { cardNumber, playersCount: room.selectedPlayers.size } }));
-                    // Immediately inform all clients about players count to update UI top bar
-                    broadcast('players_update', { playersCount: room.selectedPlayers.size }, room);
-                    broadcast('registration_update', { takenCards: Array.from(room.takenCards) }, room);
+                    room.selectedPlayers.add(ws.userId);
+
+                    // Calculate current prize pool (80% of stake × players)
+                    const currentPrizePool = Math.floor(room.selectedPlayers.size * room.stake * 0.8);
+
+                    ws.send(JSON.stringify({
+                        type: 'selection_confirmed',
+                        payload: {
+                            cardNumber,
+                            playersCount: room.selectedPlayers.size,
+                            prizePool: currentPrizePool
+                        }
+                    }));
+
+                    // Broadcast updates to all players
+                    broadcast('players_update', {
+                        playersCount: room.selectedPlayers.size,
+                        prizePool: currentPrizePool
+                    }, room);
+                    broadcast('registration_update', {
+                        takenCards: Array.from(room.takenCards),
+                        prizePool: currentPrizePool
+                    }, room);
                 }
             } else if (data.type === 'start_registration') {
                 // Optional: reply with snapshot; selection itself now triggers registration
