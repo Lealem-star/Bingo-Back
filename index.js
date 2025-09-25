@@ -134,6 +134,7 @@ function broadcast(type, payload, targetRoom = null) {
 }
 
 async function startRegistration(room) {
+    console.log('startRegistration called for room:', room.stake);
     room.phase = 'registration';
     room.registrationEndTime = Date.now() + 30000; // 30 seconds
     room.startTime = Date.now();
@@ -141,6 +142,7 @@ async function startRegistration(room) {
     room.userCardSelections.clear();
     room.selectedPlayers.clear(); // Clear previous selections
     room.currentGameId = `LB${Date.now()}`;
+    console.log('Registration started with gameId:', room.currentGameId);
 
     // Create game record in database when registration starts
     try {
@@ -447,14 +449,18 @@ wss.on('connection', async (ws, request) => {
             } else if (data.type === 'select_card') {
                 const room = ws.room;
                 const cardNumber = Number(data.cardNumber || data.payload?.cardNumber);
+                console.log('select_card received:', { cardNumber, roomPhase: room?.phase, userId: ws.userId });
+
                 if (room && Number.isInteger(cardNumber) && cardNumber >= 1 && cardNumber <= 100) {
                     // If waiting, open registration immediately and continue to process the selection
                     if (room.phase === 'waiting') {
+                        console.log('Starting registration for card selection');
                         await startRegistration(room);
                     }
 
                     // Only process if we're in registration phase
                     if (room.phase !== 'registration') {
+                        console.log('Rejecting selection - not in registration phase:', room.phase);
                         ws.send(JSON.stringify({ type: 'selection_rejected', payload: { reason: 'NOT_IN_REGISTRATION', cardNumber } }));
                         return;
                     }
