@@ -420,14 +420,8 @@ wss.on('connection', async (ws, request) => {
     const stakeParam = Number(url.searchParams.get('stake') || '');
 
     try {
-        // Handle test tokens for development
-        if (token === 'test-token' || token.startsWith('test-session-') || token.startsWith('mobile-test-')) {
-            ws.userId = 'test-user-' + Date.now();
-            console.log('Using test token for WebSocket connection');
-        } else {
-            const payload = jwt.verify(token, JWT_SECRET);
-            ws.userId = String(payload.sub);
-        }
+        const payload = jwt.verify(token, JWT_SECRET);
+        ws.userId = String(payload.sub);
     } catch (error) {
         console.log('JWT verification failed:', error.message);
         ws.close(1008, 'Invalid token');
