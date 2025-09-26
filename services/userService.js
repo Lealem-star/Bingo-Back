@@ -95,6 +95,30 @@ class UserService {
         }
     }
 
+    // Get user with wallet by database _id
+    static async getUserWithWalletById(userId) {
+        try {
+            const user = await User.findById(userId);
+            if (!user) return null;
+
+            const wallet = await Wallet.findOne({ userId: user._id });
+            return { user, wallet };
+        } catch (error) {
+            console.error('Error getting user with wallet by id:', error);
+            throw error;
+        }
+    }
+
+    // Get user by database _id
+    static async getUserById(userId) {
+        try {
+            return await User.findById(userId);
+        } catch (error) {
+            console.error('Error getting user by id:', error);
+            throw error;
+        }
+    }
+
     // Update user phone number
     static async updateUserPhone(telegramId, phone) {
         try {

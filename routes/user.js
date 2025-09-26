@@ -9,8 +9,8 @@ const router = express.Router();
 // GET /user/profile
 router.get('/profile', authMiddleware, async (req, res) => {
     try {
-        const telegramId = String(req.userId);
-        const userData = await UserService.getUserWithWallet(telegramId);
+        // req.userId comes from JWT 'sub' which is Mongo _id
+        const userData = await UserService.getUserWithWalletById(req.userId);
 
         if (!userData) {
             return res.status(404).json({ error: 'USER_NOT_FOUND' });
@@ -44,7 +44,9 @@ router.get('/profile', authMiddleware, async (req, res) => {
             wallet: {
                 balance: userData.wallet?.balance ?? 0,
                 coins: userData.wallet?.coins ?? 0,
-                gamesWon: userData.wallet?.gamesWon ?? 0
+                gamesWon: userData.wallet?.gamesWon ?? 0,
+                main: userData.wallet?.balance ?? 0,
+                play: userData.wallet?.balance ?? 0
             }
         });
     } catch (error) {
@@ -56,8 +58,8 @@ router.get('/profile', authMiddleware, async (req, res) => {
 // GET /user/summary
 router.get('/summary', authMiddleware, async (req, res) => {
     try {
-        const userId = req.userId;
-        const userData = await UserService.getUserWithWallet(userId);
+        const userId = req.userId; // Mongo _id
+        const userData = await UserService.getUserWithWalletById(userId);
 
         if (!userData) {
             return res.status(404).json({ error: 'USER_NOT_FOUND' });
@@ -91,8 +93,8 @@ router.get('/summary', authMiddleware, async (req, res) => {
 // GET /user/transactions
 router.get('/transactions', authMiddleware, async (req, res) => {
     try {
-        const telegramUserId = req.userId;
-        const user = await UserService.getUserByTelegramId(telegramUserId);
+        const dbUserId = req.userId; // Mongo _id
+        const user = await UserService.getUserById(dbUserId);
         if (!user) {
             return res.status(404).json({ error: 'USER_NOT_FOUND' });
         }
