@@ -8,8 +8,7 @@ const router = express.Router();
 // GET /wallet
 router.get('/', authMiddleware, async (req, res) => {
     try {
-        const telegramId = String(req.userId);
-        const user = await UserService.getUserByTelegramId(telegramId);
+        const user = await UserService.getUserById(req.userId);
         if (!user) return res.status(404).json({ error: 'USER_NOT_FOUND' });
 
         const wallet = await WalletService.getWallet(user._id);
@@ -17,11 +16,11 @@ router.get('/', authMiddleware, async (req, res) => {
 
         // Unified wallet response with main/play structure
         res.json({
-            balance: wallet.balance,
-            main: wallet.main || 0,
-            play: wallet.play || 0,
-            coins: wallet.coins,
-            gamesWon: wallet.gamesWon
+            balance: wallet.balance ?? 0,
+            main: wallet.main ?? wallet.balance ?? 0,
+            play: wallet.play ?? wallet.balance ?? 0,
+            coins: wallet.coins ?? 0,
+            gamesWon: wallet.gamesWon ?? 0
         });
     } catch (error) {
         console.error('Wallet fetch error:', error);
@@ -33,11 +32,11 @@ router.get('/', authMiddleware, async (req, res) => {
 router.post('/convert', authMiddleware, async (req, res) => {
     try {
         const { coins, targetWallet } = req.body;
-        const telegramId = String(req.userId);
+        const dbUserId = req.userId;
         if (!coins || isNaN(coins) || Number(coins) <= 0) {
             return res.status(400).json({ error: 'INVALID_AMOUNT' });
         }
-        const user = await UserService.getUserByTelegramId(telegramId);
+        const user = await UserService.getUserById(dbUserId);
         if (!user) return res.status(404).json({ error: 'USER_NOT_FOUND' });
 
         const result = await WalletService.convertCoins(user._id, Number(coins), targetWallet || 'main');
@@ -52,7 +51,7 @@ router.post('/convert', authMiddleware, async (req, res) => {
 router.post('/transfer', authMiddleware, async (req, res) => {
     try {
         const { amount, direction } = req.body;
-        const telegramId = String(req.userId);
+        const dbUserId = req.userId;
 
         if (!amount || isNaN(amount) || Number(amount) <= 0) {
             return res.status(400).json({ error: 'INVALID_AMOUNT' });
@@ -62,7 +61,7 @@ router.post('/transfer', authMiddleware, async (req, res) => {
             return res.status(400).json({ error: 'INVALID_DIRECTION' });
         }
 
-        const user = await UserService.getUserByTelegramId(telegramId);
+        const user = await UserService.getUserById(dbUserId);
         if (!user) return res.status(404).json({ error: 'USER_NOT_FOUND' });
 
         const result = await WalletService.transferFunds(user._id, Number(amount), direction);
@@ -80,8 +79,8 @@ router.post('/transfer', authMiddleware, async (req, res) => {
 // GET /wallet/deposit-history
 router.get('/deposit-history', authMiddleware, async (req, res) => {
     try {
-        const telegramUserId = req.userId;
-        const user = await UserService.getUserByTelegramId(telegramUserId);
+        const dbUserId = req.userId;
+        const user = await UserService.getUserById(dbUserId);
         if (!user) {
             return res.status(404).json({ error: 'USER_NOT_FOUND' });
         }
@@ -97,7 +96,7 @@ router.get('/deposit-history', authMiddleware, async (req, res) => {
 router.post('/withdraw', authMiddleware, async (req, res) => {
     try {
         const { amount, destination } = req.body;
-        const telegramUserId = req.userId;
+        const dbUserId = req.userId;
 
         if (!amount || isNaN(amount) || amount < 50 || amount > 10000) {
             return res.status(400).json({ error: 'INVALID_AMOUNT' });
@@ -107,7 +106,7 @@ router.post('/withdraw', authMiddleware, async (req, res) => {
             return res.status(400).json({ error: 'DESTINATION_REQUIRED' });
         }
 
-        const user = await UserService.getUserByTelegramId(telegramUserId);
+        const user = await UserService.getUserById(dbUserId);
         if (!user) {
             return res.status(404).json({ error: 'USER_NOT_FOUND' });
         }
