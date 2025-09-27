@@ -10,6 +10,7 @@ const UserService = require('./services/userService');
 const WalletService = require('./services/walletService');
 const Game = require('./models/Game');
 const jwt = require('jsonwebtoken');
+const BingoCards = require('./data/cartellas');
 
 // Import routes
 const { router: authRoutes, authMiddleware } = require('./routes/auth');
@@ -240,9 +241,10 @@ async function startGame(room) {
     room.winners = [];
     room.gameEndTime = Date.now() + 300000; // 5 minutes max
 
-    // Generate cartellas for all players
+    // Assign predefined cartellas based on selected card numbers
     room.selectedPlayers.forEach(userId => {
-        const cartella = generateCartella();
+        const selectedCardNumber = room.userCardSelections.get(userId);
+        const cartella = getPredefinedCartella(selectedCardNumber);
         room.cartellas.set(userId, cartella);
         const player = room.players.get(userId);
         if (player) {
@@ -255,6 +257,7 @@ async function startGame(room) {
         const player = room.players.get(userId);
         if (player && player.ws) {
             const card = room.cartellas.get(userId);
+            const cardNumber = room.userCardSelections.get(userId);
             player.ws.send(JSON.stringify({
                 type: 'game_started',
                 payload: {
@@ -265,7 +268,8 @@ async function startGame(room) {
                     prizePool: prizePool,
                     calledNumbers: room.calledNumbers,
                     called: room.calledNumbers,
-                    card: card
+                    card: card,
+                    cardNumber: cardNumber
                 }
             }));
         }
@@ -368,20 +372,14 @@ function toAnnounce(room) {
     }, 10000);
 }
 
-function generateCartella() {
-    const cartella = [];
-    for (let i = 0; i < 5; i++) {
-        const row = [];
-        for (let j = 0; j < 5; j++) {
-            let number;
-            do {
-                number = Math.floor(Math.random() * 15) + 1 + (j * 15);
-            } while (row.includes(number));
-            row.push(number);
-        }
-        cartella.push(row);
+function getPredefinedCartella(cardNumber) {
+    // Card numbers are 1-100, array index is 0-99
+    const cardIndex = cardNumber - 1;
+    if (cardIndex >= 0 && cardIndex < BingoCards.cards.length) {
+        return BingoCards.cards[cardIndex];
     }
-    return cartella;
+    // Fallback to first card if invalid number
+    return BingoCards.cards[0];
 }
 
 function checkBingo(cartella, calledNumbers) {
