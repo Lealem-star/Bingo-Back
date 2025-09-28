@@ -508,9 +508,33 @@ wss.on('connection', async (ws, request) => {
                     }, room);
                 }
             } else if (data.type === 'start_registration') {
-                // Optional: reply with snapshot; selection itself now triggers registration
                 const room = ws.room;
-                try { ws.send(JSON.stringify({ type: 'snapshot', payload: { phase: room?.phase || 'unknown', gameId: room?.currentGameId || null, playersCount: room?.selectedPlayers?.size || 0, calledNumbers: room?.calledNumbers || [], called: room?.calledNumbers || [], stake: room?.stake, takenCards: Array.from(room?.takenCards || []), yourSelection: room?.userCardSelections?.get(ws.userId) || null, nextStartAt: room?.registrationEndTime || room?.gameEndTime || null } })); } catch { }
+                console.log('start_registration received:', { roomPhase: room?.phase, userId: ws.userId });
+
+                if (room && room.phase === 'waiting') {
+                    console.log('Starting registration from start_registration message');
+                    await startRegistration(room);
+                } else {
+                    // Send current snapshot
+                    try {
+                        ws.send(JSON.stringify({
+                            type: 'snapshot',
+                            payload: {
+                                phase: room?.phase || 'unknown',
+                                gameId: room?.currentGameId || null,
+                                playersCount: room?.selectedPlayers?.size || 0,
+                                calledNumbers: room?.calledNumbers || [],
+                                called: room?.calledNumbers || [],
+                                stake: room?.stake,
+                                takenCards: Array.from(room?.takenCards || []),
+                                yourSelection: room?.userCardSelections?.get(ws.userId) || null,
+                                nextStartAt: room?.registrationEndTime || room?.gameEndTime || null
+                            }
+                        }));
+                    } catch (e) {
+                        console.error('Error sending snapshot:', e);
+                    }
+                }
             } else if (data.type === 'bingo_claim' || data.type === 'claim_bingo') {
                 const room = ws.room;
                 if (room && room.phase === 'running') {
