@@ -1,11 +1,8 @@
 const express = require('express');
 const BingoCards = require('../data/cartellas');
+const CartellaService = require('../services/cartellaService');
 
 const router = express.Router();
-
-// In-memory storage for selected cartellas (in production, use Redis or database)
-let selectedCartellas = new Map(); // cartellaNumber -> { playerId, playerName, selectedAt }
-let cartellaSelections = []; // Store selection history
 
 // GET /
 router.get('/', (req, res) => {
@@ -36,7 +33,7 @@ router.get('/api/bingo/status', (req, res) => {
 });
 
 // GET /api/game/status - Game countdown and status endpoint
-router.get('/api/game/status', (req, res) => {
+router.get('/api/game/status', async (req, res) => {
     try {
         // For now, simulate countdown logic
         // In a real implementation, this would be managed by a game service
@@ -46,11 +43,9 @@ router.get('/api/game/status', (req, res) => {
         // Simulate countdown that resets every 15 seconds
         const countdown = 15 - (seconds % 15);
 
-        // Simulate random player count (0-5 players) with some persistence
-        // Use a seed based on current minute to make it more consistent
-        const minute = now.getMinutes();
-        const seed = minute * 7 + Math.floor(seconds / 10);
-        const playersCount = Math.floor((Math.sin(seed) + 1) * 3); // 0-6 players
+        // Get actual player count from database
+        const activeSelections = await CartellaService.getActiveSelections();
+        const playersCount = activeSelections.length;
 
         // Determine game status based on countdown and players
         let gameStatus = 'waiting';
@@ -60,19 +55,22 @@ router.get('/api/game/status', (req, res) => {
             gameStatus = 'playing';
         }
 
+        // Get recent selections from database
+        const recentSelections = await CartellaService.getRecentSelections(10);
+
         res.json({
             success: true,
             countdown: countdown,
             playersCount: playersCount,
             gameStatus: gameStatus,
             gameId: gameStatus === 'playing' ? `game_${Date.now()}` : null,
-            takenCartellas: Array.from(selectedCartellas.entries()).map(([number, data]) => ({
-                cartellaNumber: number,
-                playerId: data.playerId,
-                playerName: data.playerName,
-                selectedAt: data.selectedAt
+            takenCartellas: activeSelections.map(selection => ({
+                cartellaNumber: selection.cartellaNumber,
+                playerId: selection.playerId,
+                playerName: selection.playerName,
+                selectedAt: selection.selectedAt
             })),
-            recentSelections: cartellaSelections.slice(-10), // Last 10 selections
+            recentSelections: recentSelections,
             timestamp: now.toISOString()
         });
     } catch (error) {
@@ -87,7 +85,7 @@ router.get('/api/game/status', (req, res) => {
 // POST /api/cartellas/select - Select a cartella
 router.post('/api/cartellas/select', async (req, res) => {
     try {
-        const { cartellaNumber, playerId, playerName, stake } = req.body;
+        const { cartellaNumber, playerId, playerName, stake, gameId } = req.body;
 
         if (!cartellaNumber || cartellaNumber < 1 || cartellaNumber > BingoCards.cards.length) {
             return res.status(400).json({
@@ -96,81 +94,33 @@ router.post('/api/cartellas/select', async (req, res) => {
             });
         }
 
-        // Check if cartella is already taken
-        if (selectedCartellas.has(cartellaNumber)) {
-            return res.status(409).json({
-                success: false,
-                error: 'Cartella already taken',
-                takenBy: selectedCartellas.get(cartellaNumber).playerName
-            });
-        }
-
-        // Validate player balance if playerId is provided
-        if (playerId && playerId !== 'anonymous') {
-            try {
-                const UserService = require('../services/userService');
-                const userData = await UserService.getUserWithWalletById(playerId);
-
-                if (!userData || !userData.wallet) {
-                    return res.status(400).json({
-                        success: false,
-                        error: 'Player wallet not found'
-                    });
-                }
-
-                const requiredAmount = stake || 10; // Default stake if not provided
-                const playWalletBalance = userData.wallet.play || 0;
-
-                if (playWalletBalance < requiredAmount) {
-                    return res.status(400).json({
-                        success: false,
-                        error: 'Insufficient balance',
-                        required: requiredAmount,
-                        available: playWalletBalance,
-                        shortfall: requiredAmount - playWalletBalance
-                    });
-                }
-            } catch (walletError) {
-                console.error('Error checking wallet balance:', walletError);
-                return res.status(500).json({
-                    success: false,
-                    error: 'Failed to verify wallet balance'
-                });
-            }
-        }
-
-        // Add to selected cartellas
-        const selectionData = {
-            playerId: playerId || 'anonymous',
-            playerName: playerName || 'Anonymous Player',
-            selectedAt: new Date().toISOString()
-        };
-        selectedCartellas.set(cartellaNumber, selectionData);
-
-        // Add to selection history
-        const selection = {
+        // Use CartellaService to select cartella
+        const result = await CartellaService.selectCartella(
             cartellaNumber,
-            ...selectionData,
-            timestamp: Date.now()
-        };
+            playerId,
+            playerName,
+            stake || 10,
+            gameId
+        );
 
-        cartellaSelections.push(selection);
-
-        // Keep only last 50 selections to prevent memory issues
-        if (cartellaSelections.length > 50) {
-            cartellaSelections = cartellaSelections.slice(-50);
+        if (!result.success) {
+            const statusCode = result.error === 'Cartella already taken' ? 409 : 400;
+            return res.status(statusCode).json(result);
         }
+
+        // Get updated active selections
+        const activeSelections = await CartellaService.getActiveSelections();
 
         res.json({
             success: true,
-            message: 'Cartella selected successfully',
-            cartellaNumber,
-            selection,
-            takenCartellas: Array.from(selectedCartellas.entries()).map(([number, data]) => ({
-                cartellaNumber: number,
-                playerId: data.playerId,
-                playerName: data.playerName,
-                selectedAt: data.selectedAt
+            message: result.message,
+            cartellaNumber: result.selection.cartellaNumber,
+            selection: result.selection,
+            takenCartellas: activeSelections.map(selection => ({
+                cartellaNumber: selection.cartellaNumber,
+                playerId: selection.playerId,
+                playerName: selection.playerName,
+                selectedAt: selection.selectedAt
             }))
         });
 
@@ -184,18 +134,21 @@ router.post('/api/cartellas/select', async (req, res) => {
 });
 
 // GET /api/cartellas/taken - Get all taken cartellas
-router.get('/api/cartellas/taken', (req, res) => {
+router.get('/api/cartellas/taken', async (req, res) => {
     try {
+        const activeSelections = await CartellaService.getActiveSelections();
+        const recentSelections = await CartellaService.getRecentSelections(20);
+
         res.json({
             success: true,
-            takenCartellas: Array.from(selectedCartellas.entries()).map(([number, data]) => ({
-                cartellaNumber: number,
-                playerId: data.playerId,
-                playerName: data.playerName,
-                selectedAt: data.selectedAt
+            takenCartellas: activeSelections.map(selection => ({
+                cartellaNumber: selection.cartellaNumber,
+                playerId: selection.playerId,
+                playerName: selection.playerName,
+                selectedAt: selection.selectedAt
             })),
-            recentSelections: cartellaSelections.slice(-20),
-            totalSelected: selectedCartellas.size
+            recentSelections: recentSelections,
+            totalSelected: activeSelections.length
         });
     } catch (error) {
         console.error('Error fetching taken cartellas:', error);
@@ -207,15 +160,15 @@ router.get('/api/cartellas/taken', (req, res) => {
 });
 
 // POST /api/cartellas/reset - Reset all selections (for testing/admin)
-router.post('/api/cartellas/reset', (req, res) => {
+router.post('/api/cartellas/reset', async (req, res) => {
     try {
-        selectedCartellas.clear();
-        cartellaSelections = [];
+        const result = await CartellaService.resetAllSelections();
 
-        res.json({
-            success: true,
-            message: 'All cartella selections have been reset'
-        });
+        if (!result.success) {
+            return res.status(500).json(result);
+        }
+
+        res.json(result);
     } catch (error) {
         console.error('Error resetting cartellas:', error);
         res.status(500).json({
@@ -267,6 +220,109 @@ router.get('/api/cartellas/:cardNumber', (req, res) => {
         res.status(500).json({
             success: false,
             error: 'Failed to load cartella data'
+        });
+    }
+});
+
+// POST /api/cartellas/confirm - Confirm a cartella selection (deduct stake)
+router.post('/api/cartellas/confirm', async (req, res) => {
+    try {
+        const { cartellaNumber, playerId } = req.body;
+
+        if (!cartellaNumber || !playerId) {
+            return res.status(400).json({
+                success: false,
+                error: 'Missing required fields: cartellaNumber, playerId'
+            });
+        }
+
+        const result = await CartellaService.confirmCartellaSelection(cartellaNumber, playerId);
+
+        if (!result.success) {
+            return res.status(400).json(result);
+        }
+
+        res.json(result);
+    } catch (error) {
+        console.error('Error confirming cartella selection:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to confirm cartella selection'
+        });
+    }
+});
+
+// POST /api/cartellas/cancel - Cancel a cartella selection
+router.post('/api/cartellas/cancel', async (req, res) => {
+    try {
+        const { cartellaNumber, playerId } = req.body;
+
+        if (!cartellaNumber || !playerId) {
+            return res.status(400).json({
+                success: false,
+                error: 'Missing required fields: cartellaNumber, playerId'
+            });
+        }
+
+        const result = await CartellaService.cancelCartellaSelection(cartellaNumber, playerId);
+
+        if (!result.success) {
+            return res.status(400).json(result);
+        }
+
+        res.json(result);
+    } catch (error) {
+        console.error('Error cancelling cartella selection:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to cancel cartella selection'
+        });
+    }
+});
+
+// GET /api/cartellas/stats - Get cartella selection statistics
+router.get('/api/cartellas/stats', async (req, res) => {
+    try {
+        const result = await CartellaService.getSelectionStats();
+
+        if (!result.success) {
+            return res.status(500).json(result);
+        }
+
+        res.json(result);
+    } catch (error) {
+        console.error('Error getting cartella stats:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to get cartella statistics'
+        });
+    }
+});
+
+// GET /api/cartellas/player/:playerId - Get player's cartella selections
+router.get('/api/cartellas/player/:playerId', async (req, res) => {
+    try {
+        const { playerId } = req.params;
+
+        if (!playerId) {
+            return res.status(400).json({
+                success: false,
+                error: 'Missing playerId parameter'
+            });
+        }
+
+        const result = await CartellaService.getPlayerSelections(playerId);
+
+        if (!result.success) {
+            return res.status(500).json(result);
+        }
+
+        res.json(result);
+    } catch (error) {
+        console.error('Error getting player selections:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to get player selections'
         });
     }
 });

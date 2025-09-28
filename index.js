@@ -18,6 +18,8 @@ const walletRoutes = require('./routes/wallet');
 const userRoutes = require('./routes/user');
 const adminRoutes = require('./routes/admin');
 const generalRoutes = require('./routes/general');
+const smsForwarderRoutes = require('./routes/smsForwarder');
+const smsWebhookRoutes = require('./routes/smsWebhook');
 
 const app = express();
 const server = http.createServer(app);
@@ -51,6 +53,8 @@ app.use('/auth', authRoutes);
 app.use('/wallet', walletRoutes);
 app.use('/user', userRoutes);
 app.use('/admin', adminRoutes);
+app.use('/sms-forwarder', smsForwarderRoutes);
+app.use('/sms-webhook', smsWebhookRoutes);
 app.use('/', generalRoutes);
 
 // Initialize database connection
@@ -137,7 +141,7 @@ function broadcast(type, payload, targetRoom = null) {
 async function startRegistration(room) {
     console.log('startRegistration called for room:', room.stake);
     room.phase = 'registration';
-    room.registrationEndTime = Date.now() + 30000; // 30 seconds
+    room.registrationEndTime = Date.now() + 15000; // 15 seconds
     room.startTime = Date.now();
     room.takenCards.clear();
     room.userCardSelections.clear();
@@ -167,7 +171,7 @@ async function startRegistration(room) {
         gameId: room.currentGameId,
         stake: room.stake,
         playersCount: 0, // Start with 0, will update as players join
-        duration: 30000,
+        duration: 15000, // 15 seconds
         endsAt: room.registrationEndTime,
         availableCards: Array.from({ length: 100 }, (_, i) => i + 1), // Generate 1-100 available cards
         takenCards: []
@@ -178,7 +182,7 @@ async function startRegistration(room) {
             broadcast('registration_closed', { gameId: room.currentGameId }, room);
             await startGame(room);
         }
-    }, 30000);
+    }, 15000); // 15 seconds
 }
 
 async function startGame(room) {

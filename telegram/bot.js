@@ -613,14 +613,35 @@ function startTelegramBot({ BOT_TOKEN, WEBAPP_URL }) {
                 }
                 const parsed = parseReceipt(messageText);
                 if (!parsed) { return ctx.reply('❌ Could not detect amount in your message.\n\n💡 Please paste the full receipt from your payment method.\n\n📋 Make sure it contains the amount (minimum ETB 50).'); }
+
                 let user = await UserService.getUserByTelegramId(userId);
                 if (!user) { user = await UserService.createOrUpdateUser(ctx.from); }
-                const result = await WalletService.processDeposit(user._id, parsed.amount, parsed);
-                const w = result.wallet;
-                const paymentType = parsed.type === 'telebirr' ? '📱 Telebirr' : parsed.type === 'commercial' ? '🏦 Commercial Bank' : parsed.type === 'abyssinia' ? '🏛️ Abyssinia Bank' : parsed.type === 'cbe' ? '💳 CBE Birr' : '💳 Payment';
-                const keyboard = { inline_keyboard: [[{ text: '🔙 Back to Menu', callback_data: 'back_to_menu' }]] };
-                if (isHttpsWebApp) keyboard.inline_keyboard.unshift([{ text: '🎮 Start Playing', web_app: { url: WEBAPP_URL } }]);
-                return ctx.reply(`✅ Deposit Successful!\n\n${paymentType} deposit of ETB ${parsed.amount.toFixed(2)} has been credited to your wallet!\n\n💰 Main Wallet: ETB ${w.main.toFixed(2)}\n🎮 Play Balance: ETB ${w.play.toFixed(2)}\n🪙 Coins: ${w.coins.toFixed(0)}\n\n🎮 Ready to play!`, { reply_markup: keyboard });
+
+                // Send user SMS to dual verification system
+                try {
+                    const response = await fetch(`${process.env.API_BASE_URL || 'http://localhost:3001'}/sms-forwarder/user-sms`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            userId: user._id,
+                            message: messageText,
+                            phoneNumber: user.phone
+                        })
+                    });
+
+                    const result = await response.json();
+
+                    if (result.success) {
+                        return ctx.reply(`📱 SMS Received!\n\n✅ Your payment receipt has been received and is being verified.\n\n💰 Amount: ETB ${parsed.amount.toFixed(2)}\n🔄 Status: Pending verification\n\n⏳ Please wait for the agent to confirm your payment. You'll be notified once verified!`, {
+                            reply_markup: { inline_keyboard: [[{ text: '🔙 Back to Menu', callback_data: 'back_to_menu' }]] }
+                        });
+                    } else {
+                        throw new Error('Failed to process SMS');
+                    }
+                } catch (error) {
+                    console.error('Dual SMS verification error:', error);
+                    return ctx.reply('❌ Failed to process your SMS. Please try again or contact support.');
+                }
             } catch (error) {
                 console.error('SMS deposit error:', error);
                 ctx.reply('❌ Deposit failed. Please try again or contact support.');
