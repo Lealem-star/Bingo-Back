@@ -581,14 +581,21 @@ server.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
     console.log(`🌐 WebSocket available at ws://localhost:${PORT}/ws`);
 
-    // Initialize rooms without auto-starting registration; wait for first selection
-    stakes.forEach((stake) => {
+    // Initialize rooms and auto-start registration for immediate play
+    stakes.forEach(async (stake) => {
         if (!rooms.has(stake)) {
             rooms.set(stake, makeRoom(stake));
         }
         const room = rooms.get(stake);
         room.phase = 'waiting';
-        broadcast('snapshot', { phase: 'waiting', playersCount: 0, calledNumbers: [], called: [], stake: room.stake, gameId: null, nextStartAt: null }, room);
+
+        // Auto-start registration after a short delay
+        setTimeout(async () => {
+            if (room.phase === 'waiting') {
+                console.log(`Auto-starting registration for stake ${stake}`);
+                await startRegistration(room);
+            }
+        }, 2000); // 2 second delay to allow connections
     });
 });
 
